@@ -1,0 +1,10 @@
+applications:
+  microceph:
+    charm: microceph
+    channel: __MICROCEPH_CHANNEL__
+    num_units: __MICROCEPH_UNITS__
+    constraints: "__MICROCEPH_CONSTRAINTS__"
+    storage:
+      osd-standalone: "__MICROCEPH_OSD_STORAGE__"
+relations:
+  - ['lxd:ceph', 'microceph:ceph']

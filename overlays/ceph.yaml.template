@@ -1,0 +1,4 @@
+applications:
+  lxd:
+    options:
+      storage_type: ceph

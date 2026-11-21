@@ -1,0 +1,7 @@
+applications:
+  anbox-stream-gateway:
+    num_units: __HA_STREAMING_UNITS__
+    constraints: "__CONTROL_CONSTRAINTS__"
+  anbox-stream-agent:
+    num_units: __HA_STREAMING_UNITS__
+    constraints: "__CONTROL_CONSTRAINTS__"

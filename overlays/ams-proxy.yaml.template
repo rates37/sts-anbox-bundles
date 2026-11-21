@@ -1,0 +1,7 @@
+applications:
+  ams:
+    options:
+      config: |
+        core.proxy_http=__PROXY_URL__
+        core.proxy_https=__PROXY_URL__
+        core.proxy_ignore_hosts=__NO_PROXY__

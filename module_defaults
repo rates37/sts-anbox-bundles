@@ -1,0 +1,27 @@
+# Default parameters for sts-anbox-bundles.
+# Values can be overridden via CLI options in generate-bundle.sh.
+
+ANBOX_CHANNEL="1.29/stable"
+ANBOX_SERIES="noble"
+
+# Machine constraints (defaults match Anbox Cloud 1.29 upstream bundle)
+CONTROL_CONSTRAINTS="cores=4 mem=4G root-disk=40G"
+LXD_CONSTRAINTS="cores=8 mem=16G root-disk=50G"
+
+# Scaling defaults
+LXD_UNITS=1
+HA_AMS_UNITS=3
+HA_ETCD_UNITS=3
+HA_STREAMING_UNITS=3
+
+# MicroCeph defaults (used with --microceph)
+MICROCEPH_CHANNEL="squid/stable"
+MICROCEPH_UNITS=1
+MICROCEPH_CONSTRAINTS="cores=2 mem=4G root-disk=20G"
+MICROCEPH_OSD_STORAGE="100G,1"
+
+# Default no-proxy list for PS6/PS7 environments
+DEFAULT_NO_PROXY="127.0.0.1,localhost,::1,10.149.0.0/16,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+# Default Juju model config
+DEFAULT_MODEL_CONFIG="test-mode=true"

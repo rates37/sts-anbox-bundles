@@ -1,0 +1,148 @@
+#!/bin/bash
+set -euo pipefail
+
+MODEL=""
+DO_REBOOT=false
+REGISTER_EMAIL=""
+
+usage() {
+    cat <<EOF
+USAGE: $(basename "$0") [OPTIONS]
+
+Post-deployment helper for an Anbox Cloud Juju model.
+Checks LXD reboot status, prints AMS and Dashboard access details,
+and optionally reboots LXD units or registers a dashboard account.
+
+OPTIONS:
+  -m, --model <model>          Target Juju model (default: current model).
+      --reboot                 Automatically reboot LXD units reporting 'Reboot Required'.
+      --register-email <addr>  Register an Ubuntu One email with anbox-cloud-dashboard.
+  -h, --help                   Show this help message.
+EOF
+}
+
+while (($# > 0)); do
+    case "$1" in
+        -m|--model)
+            MODEL="$2"
+            shift
+            ;;
+        --reboot)
+            DO_REBOOT=true
+            ;;
+        --register-email)
+            REGISTER_EMAIL="$2"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unknown option '$1'" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+if ! command -v juju &>/dev/null; then
+    echo "ERROR: 'juju' CLI not found" >&2
+    exit 1
+fi
+
+if ! command -v jq &>/dev/null; then
+    echo "ERROR: 'jq' is required by this script" >&2
+    exit 1
+fi
+
+MODEL_FLAG=()
+if [[ -n "${MODEL}" ]]; then
+    MODEL_FLAG=(-m "${MODEL}")
+fi
+
+STATUS_JSON="$(juju status "${MODEL_FLAG[@]}" --format=json)"
+
+echo "=== Anbox Cloud Post-Deployment Summary ==="
+
+# 1. Check LXD units for required reboots
+readarray -t REBOOT_UNITS < <(
+    echo "${STATUS_JSON}" | jq -r '
+        .applications.lxd.units // {} | to_entries[]
+        | select((.value."workload-status".message // "") | test("Reboot Required"; "i"))
+        | .key
+    '
+)
+
+if ((${#REBOOT_UNITS[@]} > 0)); then
+    echo ""
+    echo "[LXD Reboots]"
+    for unit in "${REBOOT_UNITS[@]}"; do
+        if ${DO_REBOOT}; then
+            echo "  Rebooting ${unit}..."
+            juju ssh "${MODEL_FLAG[@]}" "${unit}" -- sudo reboot || true
+        else
+            echo "  ${unit} requires a reboot. Run:"
+            echo "    juju ssh ${MODEL_FLAG[*]} ${unit} -- sudo reboot"
+        fi
+    done
+else
+    echo ""
+    echo "[LXD Reboots]"
+    echo "  No LXD units currently report 'Reboot Required'."
+fi
+
+# 2. Check Ceph storage relation if lxd is configured with storage_type=ceph
+LXD_STORAGE_TYPE="$(juju config "${MODEL_FLAG[@]}" lxd storage_type 2>/dev/null || true)"
+if [[ "${LXD_STORAGE_TYPE}" == "ceph" ]]; then
+    HAS_CEPH_REL="$(echo "${STATUS_JSON}" | jq -r '
+        (.applications.lxd.relations.ceph // []) | length
+    ')"
+    if [[ "${HAS_CEPH_REL}" == "0" ]]; then
+        echo ""
+        echo "[Ceph Storage]"
+        echo "  WARNING: lxd has storage_type=ceph but no 'ceph' relation yet."
+        echo "  Integrate with your Ceph provider:"
+        echo "    juju integrate ${MODEL_FLAG[*]} lxd:ceph microceph:ceph   # or ceph-mon:client"
+    fi
+fi
+
+# 3. AMS endpoint info
+AMS_LB_IP="$(echo "${STATUS_JSON}" | jq -r '.applications."ams-load-balancer".units // {} | to_entries[0].value."public-address" // empty')"
+AMS_IP="$(echo "${STATUS_JSON}" | jq -r '.applications.ams.units // {} | to_entries[0].value."public-address" // empty')"
+
+echo ""
+echo "[AMS]"
+if [[ -n "${AMS_LB_IP}" ]]; then
+    echo "  AMS Load Balancer: https://${AMS_LB_IP}:8444"
+    echo "  Remote amc setup:  amc remote add lb https://${AMS_LB_IP}:8444 && amc remote set-default lb"
+elif [[ -n "${AMS_IP}" ]]; then
+    echo "  AMS unit 0:        https://${AMS_IP}:8444"
+    echo "  Local amc access:  juju ssh ${MODEL_FLAG[*]} ams/0 -- amc node ls"
+else
+    echo "  AMS unit address not yet available."
+fi
+
+# 4. Dashboard / Stream Gateway info (full bundle only)
+GW_LB_IP="$(echo "${STATUS_JSON}" | jq -r '.applications."anbox-stream-gateway-lb".units // {} | to_entries[0].value."public-address" // empty')"
+HAS_DASHBOARD="$(echo "${STATUS_JSON}" | jq -r '.applications."anbox-cloud-dashboard" != null')"
+
+if [[ "${HAS_DASHBOARD}" == "true" ]]; then
+    echo ""
+    echo "[Dashboard & Streaming]"
+    if [[ -n "${GW_LB_IP}" ]]; then
+        echo "  Dashboard URL:     https://${GW_LB_IP}/  (self-signed TLS cert)"
+    else
+        echo "  Gateway LB address not yet available."
+    fi
+
+    if [[ -n "${REGISTER_EMAIL}" ]]; then
+        echo "  Registering Ubuntu One account '${REGISTER_EMAIL}'..."
+        juju run "${MODEL_FLAG[@]}" anbox-cloud-dashboard/0 --wait=5m register-account email="${REGISTER_EMAIL}"
+    else
+        echo "  Register a user:   juju run ${MODEL_FLAG[*]} anbox-cloud-dashboard/0 --wait=5m register-account email=<ubuntu-one-email>"
+    fi
+fi
+
+echo ""

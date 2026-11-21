@@ -1,0 +1,7 @@
+applications:
+  ams:
+    options:
+      ua_token: "__UA_TOKEN__"
+  lxd:
+    options:
+      ua_token: "__UA_TOKEN__"

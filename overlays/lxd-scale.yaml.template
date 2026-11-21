@@ -1,0 +1,4 @@
+applications:
+  lxd:
+    num_units: __LXD_UNITS__
+    constraints: "__LXD_CONSTRAINTS__"

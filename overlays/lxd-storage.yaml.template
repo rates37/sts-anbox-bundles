@@ -1,0 +1,4 @@
+applications:
+  lxd:
+    storage:
+      pool: "__LXD_STORAGE__"

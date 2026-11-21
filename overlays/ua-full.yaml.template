@@ -1,0 +1,16 @@
+applications:
+  ams:
+    options:
+      ua_token: "__UA_TOKEN__"
+  lxd:
+    options:
+      ua_token: "__UA_TOKEN__"
+  anbox-stream-agent:
+    options:
+      ua_token: "__UA_TOKEN__"
+  anbox-stream-gateway:
+    options:
+      ua_token: "__UA_TOKEN__"
+  anbox-cloud-dashboard:
+    options:
+      ua_token: "__UA_TOKEN__"

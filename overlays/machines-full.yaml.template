@@ -1,0 +1,10 @@
+machines:
+  '0':
+    series: __SERIES__
+    constraints: "__CONTROL_CONSTRAINTS__"
+  '1':
+    series: __SERIES__
+    constraints: "__CONTROL_CONSTRAINTS__"
+  '2':
+    series: __SERIES__
+    constraints: "__LXD_CONSTRAINTS__"

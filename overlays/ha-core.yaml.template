@@ -1,0 +1,15 @@
+applications:
+  ams:
+    num_units: __HA_AMS_UNITS__
+    constraints: "__CONTROL_CONSTRAINTS__"
+  etcd:
+    num_units: __HA_ETCD_UNITS__
+    constraints: "__CONTROL_CONSTRAINTS__"
+  ams-load-balancer:
+    charm: ams-load-balancer
+    channel: 1.17/stable
+    series: jammy
+    num_units: 1
+    constraints: "__CONTROL_CONSTRAINTS__"
+relations:
+  - ['ams', 'ams-load-balancer']
