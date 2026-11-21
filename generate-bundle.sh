@@ -152,6 +152,37 @@ detect_proxy() {
     fi
 }
 
+fetch_and_strip_upstream_bundle() {
+    local dest_yaml="$1"
+    # Store the temporary download inside BUNDLE_DIR rather than /tmp, because
+    # strictly-confined Juju snaps cannot write to the host's /tmp directory.
+    local bundle_zip="${BUNDLE_DIR}/${UPSTREAM_BUNDLE}.bundle"
+    rm -f "${bundle_zip}"
+
+    echo "INFO: downloading upstream bundle '${UPSTREAM_BUNDLE}' (channel: ${ANBOX_CHANNEL})..."
+    if [[ -n "${PROXY_URL}" ]]; then
+        http_proxy="${PROXY_URL}" https_proxy="${PROXY_URL}" \
+            juju download "${UPSTREAM_BUNDLE}" --channel "${ANBOX_CHANNEL}" --filepath "${bundle_zip}"
+    else
+        juju download "${UPSTREAM_BUNDLE}" --channel "${ANBOX_CHANNEL}" --filepath "${bundle_zip}"
+    fi
+
+    # Extract bundle.yaml and strip hardcoded charm revision pins so Juju
+    # resolves the revision matching the target series/base and architecture
+    # (upstream 1.29 bundles pin 22.04 revisions despite specifying series: noble).
+    python3 -c '
+import re, sys, zipfile
+zip_path, out_path = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(zip_path) as zf:
+    content = zf.read("bundle.yaml").decode("utf-8")
+stripped = re.sub(r"^[ \t]*revision:[ \t]*\d+[ \t]*\n", "", content, flags=re.MULTILINE)
+with open(out_path, "w", encoding="utf-8") as fh:
+    fh.write(stripped)
+' "${bundle_zip}" "${dest_yaml}"
+
+    rm -f "${bundle_zip}"
+}
+
 require_arg() {
     if [[ $# -lt 2 || -z "$2" ]]; then
         echo "ERROR: option '$1' requires a value" >&2
@@ -428,6 +459,13 @@ fi
 mkdir -p "${BUNDLE_DIR}/o"
 rm -rf "${BUNDLE_DIR}/o/"*
 
+DEPLOY_TARGET="${UPSTREAM_BUNDLE} --channel ${ANBOX_CHANNEL}"
+if ! ${DRY_RUN}; then
+    LOCAL_BUNDLE_YAML="${BUNDLE_DIR}/bundle.yaml"
+    fetch_and_strip_upstream_bundle "${LOCAL_BUNDLE_YAML}"
+    DEPLOY_TARGET="$(printf '%q' "${LOCAL_BUNDLE_YAML}")"
+fi
+
 declare -a OVERLAY_PATHS=()
 echo "Created ${UPSTREAM_BUNDLE} (${ANBOX_CHANNEL}, ${ANBOX_SERIES}) overlays in ${BUNDLE_DIR}/o:"
 for spec in "${OVERLAYS[@]}"; do
@@ -469,7 +507,7 @@ if ((${#MODEL_CONFIG_ARGS[@]} > 0)); then
 fi
 
 {
-    printf 'juju deploy %s --channel %s' "${UPSTREAM_BUNDLE}" "${ANBOX_CHANNEL}"
+    printf 'juju deploy %s' "${DEPLOY_TARGET}"
     for path in "${OVERLAY_PATHS[@]}"; do
         printf ' \\\n  --overlay %q' "${path}"
     done
