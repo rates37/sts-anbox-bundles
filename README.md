@@ -20,7 +20,8 @@ Instead of duplicating upstream Anbox Cloud bundles, `generate-bundle.sh` deploy
 3. **PS6**: `http://squid.internal:3128` (tested via `nc -vz squid.internal 3128`)
 
 When a proxy is active, `generate-bundle.sh`:
-- Applies Juju `model-config` (`juju-http-proxy`, `juju-https-proxy`, `juju-no-proxy`, `apt-http-proxy`, `apt-https-proxy`, `snap-http-proxy`, `snap-https-proxy`).
+- Applies Juju `model-config` (`juju-http-proxy`, `juju-https-proxy`, `juju-no-proxy`, `apt-http-proxy`, `apt-https-proxy`, `snap-http-proxy`, `snap-https-proxy`, plus `cloudinit-userdata` `preruncmd` to run `pro config set http_proxy`/`https_proxy` because `pro` ignores environment proxy variables).
+- Warns if the proxy returns HTTP `403` for `archive.anbox-cloud.io` or `images.anbox-cloud.io` (both domains must be allowlisted on the egress proxy for `pro enable anbox-cloud` and AMS image sync).
 - Generates `ams-proxy.yaml` setting `core.proxy_http`, `core.proxy_https`, and `core.proxy_ignore_hosts` on the `ams` charm so AMS can pull Android images through the proxy.
 
 ## Quickstart

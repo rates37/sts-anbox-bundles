@@ -183,6 +183,43 @@ with open(out_path, "w", encoding="utf-8") as fh:
     rm -f "${bundle_zip}"
 }
 
+dedupe_csv() {
+    python3 -c '
+import sys
+seen = set()
+out = []
+for part in sys.argv[1].split(","):
+    part = part.strip()
+    if part and part not in seen:
+        seen.add(part)
+        out.append(part)
+print(",".join(out))
+' "$1"
+}
+
+check_proxy_anbox_access() {
+    [[ -n "${PROXY_URL}" ]] || return 0
+    command -v curl &>/dev/null || return 0
+
+    local host code blocked=false
+    for host in archive.anbox-cloud.io images.anbox-cloud.io; do
+        code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -x "${PROXY_URL}" "https://${host}/" 2>/dev/null || true)
+        if [[ "${code}" == "403" ]]; then
+            echo "WARNING: proxy ${PROXY_URL} returned HTTP 403 Forbidden for https://${host}/" >&2
+            blocked=true
+        fi
+    done
+
+    if ${blocked}; then
+        cat >&2 <<EOF
+WARNING: One or more Anbox Cloud domains are blocked by ${PROXY_URL}.
+         'pro enable anbox-cloud' and AMS image sync will fail until
+         archive.anbox-cloud.io and images.anbox-cloud.io are allowlisted
+         on the egress proxy (or an alternative --proxy is provided).
+EOF
+    fi
+}
+
 require_arg() {
     if [[ $# -lt 2 || -z "$2" ]]; then
         echo "ERROR: option '$1' requires a value" >&2
@@ -357,7 +394,7 @@ if [[ "${ANBOX_SERIES}" != "noble" && "${ANBOX_SERIES}" != "jammy" ]]; then
     echo "WARNING: Anbox Cloud officially supports 'noble' and 'jammy' (got '${ANBOX_SERIES}')" >&2
 fi
 
-# Detect proxy & build no_proxy list
+# Detect proxy & build deduplicated no_proxy list
 detect_proxy
 
 RESOLVED_NO_PROXY="${DEFAULT_NO_PROXY}"
@@ -367,6 +404,7 @@ fi
 if [[ -n "${CUSTOM_NO_PROXY}" ]]; then
     RESOLVED_NO_PROXY="${RESOLVED_NO_PROXY},${CUSTOM_NO_PROXY}"
 fi
+RESOLVED_NO_PROXY="$(dedupe_csv "${RESOLVED_NO_PROXY}")"
 
 # Determine upstream Charmhub bundle name
 if ${CORE_ONLY}; then
@@ -414,6 +452,10 @@ for kv in ${DEFAULT_MODEL_CONFIG}; do
     MODEL_CONFIG_ARGS+=("${kv}")
 done
 if [[ -n "${PROXY_URL}" ]]; then
+    # Ubuntu Pro CLI ('pro') ignores http_proxy/https_proxy env vars and only
+    # reads /etc/ubuntu-advantage/uaclient.conf, so configure it via cloud-init
+    # preruncmd before charm install hooks run.
+    PRO_CLOUDINIT_USERDATA="$(printf 'preruncmd:\n  - pro config set http_proxy=%s\n  - pro config set https_proxy=%s\n' "${PROXY_URL}" "${PROXY_URL}")"
     MODEL_CONFIG_ARGS+=(
         "juju-http-proxy=${PROXY_URL}"
         "juju-https-proxy=${PROXY_URL}"
@@ -422,6 +464,7 @@ if [[ -n "${PROXY_URL}" ]]; then
         "apt-https-proxy=${PROXY_URL}"
         "snap-http-proxy=${PROXY_URL}"
         "snap-https-proxy=${PROXY_URL}"
+        "cloudinit-userdata=${PRO_CLOUDINIT_USERDATA}"
     )
 fi
 if ((${#EXTRA_MODEL_CONFIG[@]} > 0)); then
@@ -430,6 +473,8 @@ fi
 
 # Create/switch Juju model and apply model-config (unless --dry-run)
 if ! ${DRY_RUN}; then
+    check_proxy_anbox_access
+
     if ! command -v juju &>/dev/null; then
         echo "ERROR: 'juju' CLI not found. Install Juju 3.x or pass --dry-run to generate files only." >&2
         exit 1
