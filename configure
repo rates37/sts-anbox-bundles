@@ -3,6 +3,7 @@ set -euo pipefail
 
 MODEL=""
 DO_REBOOT=false
+FIX_MODULES=false
 REGISTER_EMAIL=""
 
 usage() {
@@ -10,12 +11,15 @@ usage() {
 USAGE: $(basename "$0") [OPTIONS]
 
 Post-deployment helper for an Anbox Cloud Juju model.
-Checks LXD reboot status, prints AMS and Dashboard access details,
-and optionally reboots LXD units or registers a dashboard account.
+Checks LXD reboot status and binder_linux kernel module availability,
+prints AMS and Dashboard access details, and optionally reboots LXD
+units, installs missing linux-modules-extra, or registers a dashboard account.
 
 OPTIONS:
   -m, --model <model>          Target Juju model (default: current model).
       --reboot                 Automatically reboot LXD units reporting 'Reboot Required'.
+      --fix-modules            Install linux-modules-extra-\$(uname -r) on LXD units
+                               missing the binder_linux kernel module.
       --register-email <addr>  Register an Ubuntu One email with anbox-cloud-dashboard.
   -h, --help                   Show this help message.
 EOF
@@ -29,6 +33,9 @@ while (($# > 0)); do
             ;;
         --reboot)
             DO_REBOOT=true
+            ;;
+        --fix-modules)
+            FIX_MODULES=true
             ;;
         --register-email)
             REGISTER_EMAIL="$2"
@@ -91,6 +98,32 @@ else
     echo ""
     echo "[LXD Reboots]"
     echo "  No LXD units currently report 'Reboot Required'."
+fi
+
+# 1b. Check binder_linux kernel module on LXD units
+readarray -t LXD_UNITS < <(
+    echo "${STATUS_JSON}" | jq -r '.applications.lxd.units // {} | keys[]'
+)
+
+if ((${#LXD_UNITS[@]} > 0)); then
+    echo ""
+    echo "[LXD Kernel Modules]"
+    for unit in "${LXD_UNITS[@]}"; do
+        if juju ssh "${MODEL_FLAG[@]}" "${unit}" -- "modinfo binder_linux >/dev/null 2>&1"; then
+            echo "  ${unit}: binder_linux available."
+        else
+            kver="$(juju ssh "${MODEL_FLAG[@]}" "${unit}" -- "uname -r" 2>/dev/null | tr -d '\r\n')"
+            if ${FIX_MODULES}; then
+                echo "  ${unit}: installing linux-modules-extra-${kver}..."
+                juju ssh "${MODEL_FLAG[@]}" "${unit}" -- \
+                    "sudo apt-get update && sudo apt-get install -y linux-modules-extra-${kver} && sudo modprobe binder_linux"
+            else
+                echo "  WARNING: ${unit} is missing binder_linux for running kernel ${kver}."
+                echo "  Re-run with --fix-modules or run:"
+                echo "    juju ssh ${MODEL_FLAG[*]} ${unit} -- \"sudo apt-get update && sudo apt-get install -y linux-modules-extra-${kver} && sudo modprobe binder_linux\""
+            fi
+        fi
+    done
 fi
 
 # 2. Check Ceph storage relation if lxd is configured with storage_type=ceph

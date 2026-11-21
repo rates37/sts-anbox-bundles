@@ -17,7 +17,7 @@ Instead of duplicating upstream Anbox Cloud bundles, `generate-bundle.sh` deploy
 
 1. `$http_proxy` (if already set in your environment)
 2. **PS7**: `http://egress.ps7.internal:3128` (tested via `nc -vz egress.ps7.internal 3128`)
-3. **PS6**: `http://squid.internal:3128` (tested via `nc -vz squid.internal 3128`)
+3. **PS6**: PS6 reproducer instances have direct internet egress, so `squid.internal:3128` is intentionally **not** auto-enabled (it blocks `archive.anbox-cloud.io` by default). Use `--proxy http://squid.internal:3128` only if you explicitly want to force it.
 
 When a proxy is active, `generate-bundle.sh`:
 - Applies Juju `model-config` (`juju-http-proxy`, `juju-https-proxy`, `juju-no-proxy`, `apt-http-proxy`, `apt-https-proxy`, `snap-http-proxy`, `snap-https-proxy`, plus `cloudinit-userdata` `preruncmd` to run `pro config set http_proxy`/`https_proxy` because `pro` ignores environment proxy variables).
@@ -99,6 +99,8 @@ Automatically reboot any LXD units reporting `Reboot Required` and register your
 ```bash
 ./configure -m anbox-ps7 --reboot --register-email you@canonical.com
 ```
+
+> **Note:** After `ams/0` reaches `active`, initial image synchronization from `images.anbox-cloud.io` can take a few minutes before `amc image ls` is populated (a brief `401 Unauthorized` in early `snap logs ams` before the charm finishes writing `images.auth` is normal). Also note that AMS on port `8444` is an mTLS REST API for `amc` — the web dashboard (`https://<gateway-lb-ip>/`) is only included in the full bundle (without `--core`).
 
 ## Options Reference
 

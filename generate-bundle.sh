@@ -61,9 +61,9 @@ OPTIONS:
   --ceph                         Configure LXD with storage_type=ceph (for external Ceph).
   --microceph                    Implies --ceph and deploys microceph in the same model.
 
-  --proxy <url>                  HTTP/HTTPS proxy URL (auto-detects PS7 then PS6 if unset).
+  --proxy <url>                  HTTP/HTTPS proxy URL (auto-detects PS7 if unset).
   --no-proxy <list>              Extra comma-separated no_proxy entries.
-  --disable-proxy                Disable PS7/PS6 proxy auto-detection.
+  --disable-proxy                Disable PS7/env proxy auto-detection.
   --model-config <k=v>           Additional Juju model-config entry (repeatable).
 
   --debug                        Enable bash debug tracing (set -x).
@@ -146,9 +146,6 @@ detect_proxy() {
     elif timeout 1s nc -vz egress.ps7.internal 3128 &>/dev/null; then
         PROXY_URL="http://egress.ps7.internal:3128"
         echo "INFO: detected PS7 proxy: ${PROXY_URL}"
-    elif timeout 1s nc -vz squid.internal 3128 &>/dev/null; then
-        PROXY_URL="http://squid.internal:3128"
-        echo "INFO: detected PS6 proxy: ${PROXY_URL}"
     fi
 }
 
