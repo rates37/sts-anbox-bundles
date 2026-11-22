@@ -157,17 +157,20 @@ else
     echo "  AMS unit address not yet available."
 fi
 
-# 4. Dashboard / Stream Gateway info (full bundle only)
-GW_LB_IP="$(echo "${STATUS_JSON}" | jq -r '.applications."anbox-stream-gateway-lb".units // {} | to_entries[0].value."public-address" // empty')"
+# 4. Dashboard / Stream Gateway info (full bundle or Terraform anbox-controller model)
+GW_LB_IP="$(echo "${STATUS_JSON}" | jq -r '.applications."anbox-stream-gateway-lb".units // .applications.haproxy.units // {} | to_entries[0].value."public-address" // empty')"
+DASHBOARD_IP="$(echo "${STATUS_JSON}" | jq -r '.applications."anbox-cloud-dashboard".units // {} | to_entries[0].value."public-address" // empty')"
 HAS_DASHBOARD="$(echo "${STATUS_JSON}" | jq -r '.applications."anbox-cloud-dashboard" != null')"
 
 if [[ "${HAS_DASHBOARD}" == "true" ]]; then
     echo ""
     echo "[Dashboard & Streaming]"
     if [[ -n "${GW_LB_IP}" ]]; then
-        echo "  Dashboard URL:     https://${GW_LB_IP}/  (self-signed TLS cert)"
+        echo "  Dashboard URL:     https://${GW_LB_IP}/  (via LB, self-signed TLS cert)"
+    elif [[ -n "${DASHBOARD_IP}" ]]; then
+        echo "  Dashboard URL:     https://${DASHBOARD_IP}/  (direct, self-signed TLS cert)"
     else
-        echo "  Gateway LB address not yet available."
+        echo "  Dashboard / Gateway LB address not yet available."
     fi
 
     if [[ -n "${REGISTER_EMAIL}" ]]; then

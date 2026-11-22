@@ -1,12 +1,14 @@
 # sts-anbox-bundles
 
-Minimal `stsstack-bundles`-style generator for deploying **charmed Anbox Cloud** on **PS7**, **PS6**, and other Juju 3.x clouds.
+Minimal `stsstack-bundles`-style generator for deploying **charmed Anbox Cloud** on **PS7**, **PS6**, and other Juju 3.x clouds:
 
-Instead of duplicating upstream Anbox Cloud bundles, `generate-bundle.sh` deploys the official Charmhub bundle (`anbox-cloud` or `anbox-cloud-core`) with dynamically rendered Juju overlays (Ubuntu Pro token, machine constraints, LXD scaling/storage, PS7/PS6 proxy settings, HA, and Ceph/MicroCeph).
+- **Anbox Cloud `<= 1.29`** ([generate-bundle.sh](./generate-bundle.sh)): deploys the official Charmhub bundle (`anbox-cloud` or `anbox-cloud-core`) with dynamically rendered Juju overlays (Ubuntu Pro token, machine constraints, LXD scaling/storage, PS7 proxy settings, HA, and Ceph/MicroCeph).
+- **Anbox Cloud `>= 1.30`** ([deploy-terraform.sh](./deploy-terraform.sh)): wraps the official upstream [`anbox-cloud-terraform`](https://github.com/canonical/anbox-cloud-terraform) plan (the only supported charm-based deployment method from 1.30.0 onward) with generated `deploy.tfvars` and Terraform module overrides for PS7 proxy/cloud-init, AMS proxy, LXD constraints, and LXD storage.
 
 ## Prerequisites
 
 - **Juju 3.x** (3.6 LTS recommended): `sudo snap install --channel=3/stable juju`
+- **Terraform** (only required for `deploy-terraform.sh` / Anbox Cloud `>= 1.30`): `sudo snap install --classic --channel=latest/stable terraform`
 - A bootstrapped Juju controller on PS7, PS6, or another supported cloud
 - An **Ubuntu Pro** subscription token (full Ubuntu Pro, **not** Infra-only)
 - `jq` (used by `./configure`)
@@ -80,6 +82,42 @@ export UA_TOKEN="<your-ubuntu-pro-token>"
 ./generate-bundle.sh -n anbox-ps7 --replay --run
 ```
 
+## Quickstart: Terraform Mode (`>= 1.30`)
+
+`deploy-terraform.sh` clones `canonical/anbox-cloud-terraform` into `b/<name>/terraform/`, generates `b/<name>/deploy.tfvars` (`chmod 600`), and injects `sts_override.tf` into each module for PS7 proxy + `cloudinit-userdata` (`pro config set`), AMS proxy config, LXD machine constraints, and optional LXD storage.
+
+### Dry-run (inspect generated `deploy.tfvars` and overrides)
+
+```bash
+./deploy-terraform.sh -n tf-anbox -c 1.30/stable --dry-run
+```
+
+### Plan and deploy
+
+```bash
+# Plan only
+./deploy-terraform.sh -n tf-anbox -c 1.30/stable --enable-lb --plan
+
+# Full deploy (init + plan + apply -parallelism=1)
+./deploy-terraform.sh -n tf-anbox -c 1.30/stable --lxd-units 1 --enable-lb --run
+```
+
+### Deploy a pinned tag or pre-release channel
+
+```bash
+# Pinned 1.30.1 Terraform tag
+./deploy-terraform.sh -n tf-anbox-130 --ref v1.30.1 -c 1.30/stable --enable-lb --run
+
+# Pre-release / edge channel (e.g. 1.31/beta or 1.32/edge)
+./deploy-terraform.sh -n tf-anbox-beta -c 1.31/beta --enable-lb --run
+```
+
+### Tear down a Terraform deployment
+
+```bash
+./deploy-terraform.sh -n tf-anbox --destroy
+```
+
 ## Post-Deployment
 
 Monitor the deployment:
@@ -118,4 +156,4 @@ Keep `sshuttle` running, then open the exact registration URL in your browser an
 
 ## Options Reference
 
-Run `./generate-bundle.sh --help` for the full list of CLI flags, or inspect `module_defaults` for default channel, series, constraints, and `no_proxy` values.
+Run `./generate-bundle.sh --help`, `./deploy-terraform.sh --help`, or `./configure --help` for the full list of CLI flags, or inspect `module_defaults` for default channels, series/base, constraints, and `no_proxy` values.

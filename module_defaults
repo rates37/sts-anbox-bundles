@@ -25,3 +25,11 @@ DEFAULT_NO_PROXY="127.0.0.1,localhost,::1,10.149.0.0/16,10.0.0.0/8,172.16.0.0/12
 
 # Default Juju model config
 DEFAULT_MODEL_CONFIG="test-mode=true"
+
+# Terraform mode defaults (for Anbox Cloud >= 1.30 via anbox-cloud-terraform)
+TF_REPO_URL="https://github.com/canonical/anbox-cloud-terraform.git"
+TF_REPO_REF="main"
+TF_ANBOX_CHANNEL="1.30/stable"
+TF_BASE="ubuntu@24.04"
+TF_CONSTRAINTS="arch=amd64"
+
