@@ -94,11 +94,25 @@ Run `./configure` to check for required LXD reboots and print AMS / Dashboard ac
 ./configure -m anbox-ps7
 ```
 
-Automatically reboot any LXD units reporting `Reboot Required` and register your Ubuntu One account on the dashboard:
+Automatically reboot any LXD units reporting `Reboot Required`, install missing `binder_linux` kernel modules if needed, and register your Ubuntu One account on the dashboard:
 
 ```bash
-./configure -m anbox-ps7 --reboot --register-email you@canonical.com
+./configure -m anbox-ps7 --reboot --fix-modules --register-email you@canonical.com
 ```
+
+### Accessing the Dashboard from Your Laptop
+
+The dashboard and registration URL (`https://<gateway-lb-ip>/register?token=...`) use a private ProdStack IP that isn't directly routable from your computer. Start `sshuttle` to tunnel into the ProdStack reproducer subnet:
+
+```bash
+# PS7
+sshuttle -r <ps7-bastion> 10.159.0.0/16
+
+# PS6
+sshuttle -r <ps6-bastion> 10.149.0.0/16
+```
+
+Keep `sshuttle` running, then open the exact registration URL in your browser and accept the self-signed TLS certificate warning. Prefer `sshuttle` over `ssh -L` port forwarding so the Ubuntu One OpenID callback redirects cleanly back to `<gateway-lb-ip>`. Registration tokens expire after 1 hour: re-run `./configure --register-email ...` to generate a new link if needed.
 
 > **Note:** After `ams/0` reaches `active`, initial image synchronization from `images.anbox-cloud.io` can take a few minutes before `amc image ls` is populated (a brief `401 Unauthorized` in early `snap logs ams` before the charm finishes writing `images.auth` is normal). Also note that AMS on port `8444` is an mTLS REST API for `amc` — the web dashboard (`https://<gateway-lb-ip>/`) is only included in the full bundle (without `--core`).
 
