@@ -163,10 +163,19 @@ detect_ssh_key() {
     if [[ -n "${SSH_KEY_PATH}" ]]; then
         return
     fi
-    if [[ -f "${HOME}/.ssh/id_ed25519.pub" ]]; then
+    # Prefer Juju's own SSH key (used by 'juju ssh' by default), rewriting the
+    # reserved 'juju-client-key' comment to 'juju-tf' so Juju's juju_ssh_key
+    # resource accepts it.
+    if [[ -f "${HOME}/.local/share/juju/ssh/juju_id_rsa.pub" ]]; then
+        mkdir -p "${WORK_DIR}"
+        awk '{print $1, $2, "juju-tf"}' "${HOME}/.local/share/juju/ssh/juju_id_rsa.pub" > "${WORK_DIR}/juju_id_rsa.pub"
+        SSH_KEY_PATH="${WORK_DIR}/juju_id_rsa.pub"
+    elif [[ -f "${HOME}/.ssh/id_ed25519.pub" ]]; then
         SSH_KEY_PATH="${HOME}/.ssh/id_ed25519.pub"
     elif [[ -f "${HOME}/.ssh/id_rsa.pub" ]]; then
         SSH_KEY_PATH="${HOME}/.ssh/id_rsa.pub"
+    else
+        echo "WARNING: No Juju or ~/.ssh public key found; 'juju ssh' may fail unless --ssh-key is provided." >&2
     fi
 }
 
