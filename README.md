@@ -91,6 +91,7 @@ export UA_TOKEN="<your-ubuntu-pro-token>"
 > **Note:**
 > - Upstream `anbox-cloud-terraform` uses fixed Juju model names (`anbox-controller`, `anbox-subcluster-<suffix>`, `anbox-registry`), so **only one Terraform deployment is supported per Juju controller**. `deploy-terraform.sh` aborts before `apply` if any of those models already exist outside the current workspace's state.
 > - Changing `--constraints`, `--lxd-constraints`, or `--lxd-storage` on an existing Terraform deployment forces replacement of the affected machines/LXD application.
+> - Enabling `--registry` deploys the `anbox-registry` model and wires each subcluster to AAR using `--registry-mode` (`client` by default, or `publisher`); per-subcluster modes can be specified via `--subcluster a:publisher --subcluster b:client`.
 
 ### Dry-run (inspect generated `deploy.tfvars.json` and overrides)
 

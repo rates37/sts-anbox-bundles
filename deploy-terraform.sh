@@ -31,13 +31,16 @@ ENABLE_HA=false
 ENABLE_LB=false
 ENABLE_COS=false
 DEPLOY_REGISTRY=false
+DEFAULT_REGISTRY_MODE="client"
 ENABLE_DEBUG_MODE=false
 
 PROXY_URL=""
 CUSTOM_NO_PROXY=""
 DISABLE_PROXY=false
 
+declare -a RAW_SUBCLUSTERS=()
 declare -a SUBCLUSTERS=()
+declare -A SUBCLUSTER_REG_MODES=()
 declare -a CACHED_ARGS=("$@")
 
 usage() {
@@ -74,7 +77,9 @@ OPTIONS:
       --ssh-key <path>           SSH public key to inject into Juju models
                                  (auto-detects ~/.ssh/id_ed25519.pub or ~/.ssh/id_rsa.pub).
 
-      --subcluster <name>        Subcluster suffix (repeatable; default: "a" -> anbox-subcluster-a).
+      --subcluster <name[:mode]> Subcluster suffix (repeatable; default: "a" -> anbox-subcluster-a).
+                                 Optional :client or :publisher suffix wires AAR registry mode
+                                 (implies --registry). Names must match ^[a-z0-9][a-z0-9-]*$.
       --lxd-units <N>            LXD worker count per subcluster (default: ${LXD_UNITS}).
       --lxd-constraints <str>    LXD machine constraints (default: "${TF_LXD_CONSTRAINTS}").
                                  NOTE: Changing constraints replaces existing LXD machines.
@@ -86,7 +91,10 @@ OPTIONS:
       --ha                       Enable HA mode (enable_ha = true).
       --enable-lb                Deploy HAProxy load balancer in anbox-controller.
       --cos                      Enable COS / grafana-agent integration.
-      --registry                 Deploy Anbox Application Registry (anbox-registry model).
+      --registry                 Deploy Anbox Application Registry (anbox-registry model) and
+                                 connect subclusters using --registry-mode (default: client).
+      --registry-mode <mode>     Default AAR mode for subclusters when --registry is enabled:
+                                 'client' (default) or 'publisher'.
       --debug-mode               Enable debug logging on Anbox charms.
 
       --proxy <url>              HTTP/HTTPS proxy URL (auto-detects PS7 if unset).
@@ -460,7 +468,7 @@ while (($# > 0)); do
             ;;
         --subcluster)
             require_arg "$@"
-            SUBCLUSTERS+=("$2")
+            RAW_SUBCLUSTERS+=("$2")
             shift
             ;;
         --lxd-units)
@@ -494,6 +502,11 @@ while (($# > 0)); do
             ;;
         --registry)
             DEPLOY_REGISTRY=true
+            ;;
+        --registry-mode)
+            require_arg "$@"
+            DEFAULT_REGISTRY_MODE="$2"
+            shift
             ;;
         --debug-mode)
             ENABLE_DEBUG_MODE=true
@@ -587,8 +600,47 @@ if ! [[ "${LXD_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 
-if ((${#SUBCLUSTERS[@]} == 0)); then
-    SUBCLUSTERS=("a")
+if [[ "${DEFAULT_REGISTRY_MODE}" != "client" && "${DEFAULT_REGISTRY_MODE}" != "publisher" ]]; then
+    echo "ERROR: --registry-mode must be 'client' or 'publisher' (got '${DEFAULT_REGISTRY_MODE}')" >&2
+    exit 1
+fi
+
+if ((${#RAW_SUBCLUSTERS[@]} == 0)); then
+    RAW_SUBCLUSTERS=("a")
+fi
+
+# Parse and validate subclusters (name[:client|publisher]), rejecting invalid or duplicate names
+declare -A SEEN_SUBCLUSTERS=()
+for spec in "${RAW_SUBCLUSTERS[@]}"; do
+    sc_name="${spec%%:*}"
+    sc_mode=""
+    if [[ "${spec}" == *:* ]]; then
+        sc_mode="${spec#*:}"
+        if [[ "${sc_mode}" != "client" && "${sc_mode}" != "publisher" ]]; then
+            echo "ERROR: invalid registry mode '${sc_mode}' for subcluster '${sc_name}' (must be 'client' or 'publisher')" >&2
+            exit 1
+        fi
+        DEPLOY_REGISTRY=true
+    fi
+    if ! [[ "${sc_name}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        echo "ERROR: invalid subcluster name '${sc_name}' (must match ^[a-z0-9][a-z0-9-]*$)" >&2
+        exit 1
+    fi
+    if [[ -n "${SEEN_SUBCLUSTERS[${sc_name}]:-}" ]]; then
+        echo "ERROR: duplicate subcluster name '${sc_name}'" >&2
+        exit 1
+    fi
+    SEEN_SUBCLUSTERS["${sc_name}"]=1
+    SUBCLUSTERS+=("${sc_name}")
+    SUBCLUSTER_REG_MODES["${sc_name}"]="${sc_mode}"
+done
+
+if ${DEPLOY_REGISTRY}; then
+    for sc in "${SUBCLUSTERS[@]}"; do
+        if [[ -z "${SUBCLUSTER_REG_MODES[${sc}]}" ]]; then
+            SUBCLUSTER_REG_MODES["${sc}"]="${DEFAULT_REGISTRY_MODE}"
+        fi
+    done
 fi
 
 # Derive default anbox-cloud-terraform ref from channel when --ref is not given
@@ -640,12 +692,27 @@ STS_DEPLOY_REGISTRY="${DEPLOY_REGISTRY}" \
 STS_ENABLE_DEBUG_MODE="${ENABLE_DEBUG_MODE}" \
 STS_SSH_KEY_PATH="${SSH_KEY_PATH}" \
 STS_LXD_UNITS="${LXD_UNITS}" \
-STS_SUBCLUSTERS="$(printf '%s\n' "${SUBCLUSTERS[@]}")" \
+STS_SUBCLUSTERS="$(
+    for sc in "${SUBCLUSTERS[@]}"; do
+        printf '%s:%s\n' "${sc}" "${SUBCLUSTER_REG_MODES[${sc}]:-}"
+    done
+)" \
 python3 -c '
 import json, os, sys
 
 def as_bool(v):
     return v.lower() == "true"
+
+deploy_registry = as_bool(os.environ["STS_DEPLOY_REGISTRY"])
+subclusters = []
+for line in os.environ["STS_SUBCLUSTERS"].splitlines():
+    if not line:
+        continue
+    name, _, mode = line.partition(":")
+    entry = {"name": name, "lxd_node_count": int(os.environ["STS_LXD_UNITS"])}
+    if deploy_registry and mode:
+        entry["registry"] = {"mode": mode}
+    subclusters.append(entry)
 
 data = {
     "ubuntu_pro_token": os.environ["STS_UA_TOKEN"],
@@ -655,13 +722,9 @@ data = {
     "enable_ha": as_bool(os.environ["STS_ENABLE_HA"]),
     "enable_lb": as_bool(os.environ["STS_ENABLE_LB"]),
     "enable_cos": as_bool(os.environ["STS_ENABLE_COS"]),
-    "deploy_registry": as_bool(os.environ["STS_DEPLOY_REGISTRY"]),
+    "deploy_registry": deploy_registry,
     "enable_debug_mode": as_bool(os.environ["STS_ENABLE_DEBUG_MODE"]),
-    "subclusters": [
-        {"name": name, "lxd_node_count": int(os.environ["STS_LXD_UNITS"])}
-        for name in os.environ["STS_SUBCLUSTERS"].splitlines()
-        if name
-    ],
+    "subclusters": subclusters,
 }
 if os.environ["STS_SSH_KEY_PATH"]:
     data["ssh_key_path"] = os.environ["STS_SSH_KEY_PATH"]
