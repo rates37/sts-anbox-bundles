@@ -256,6 +256,11 @@ require_arg() {
 # Parse CLI arguments
 while (($# > 0)); do
     case "$1" in
+        --*=*)
+            set -- "${1%%=*}" "${1#*=}" "${@:2}"
+            ;;
+    esac
+    case "$1" in
         -n|--name)
             require_arg "$@"
             if [[ "$2" == *:* ]]; then
@@ -357,7 +362,7 @@ while (($# > 0)); do
             exit 0
             ;;
         *)
-            echo "ERROR: unknown option '$1'" >&2
+            echo "ERROR: unknown option '${1%%=*}'" >&2
             usage >&2
             exit 1
             ;;
@@ -581,13 +586,20 @@ if unrendered=$(grep -rn '__[A-Z0-9_]*__' "${BUNDLE_DIR}/o" 2>/dev/null); then
     exit 1
 fi
 
-# Save commands for replayability (disable xtrace while redacting UA_TOKEN_VAL)
+# Save commands for replayability (disable xtrace while redacting --ua-token)
 { set +x; } 2>/dev/null
 {
     printf '%s' "${SCRIPT_DIR}/generate-bundle.sh"
+    redact_next=false
     for arg in "${CACHED_ARGS[@]}"; do
-        if [[ "${arg}" == "${UA_TOKEN_VAL}" ]]; then
+        if ${redact_next}; then
             printf ' %q' "<REDACTED>"
+            redact_next=false
+        elif [[ "${arg}" == "--ua-token" ]]; then
+            printf ' %q' "${arg}"
+            redact_next=true
+        elif [[ "${arg}" == --ua-token=* ]]; then
+            printf ' %q' "--ua-token=<REDACTED>"
         else
             printf ' %q' "${arg}"
         fi

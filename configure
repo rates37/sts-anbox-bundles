@@ -27,6 +27,11 @@ EOF
 
 while (($# > 0)); do
     case "$1" in
+        --*=*)
+            set -- "${1%%=*}" "${1#*=}" "${@:2}"
+            ;;
+    esac
+    case "$1" in
         -m|--model)
             MODEL="$2"
             shift
@@ -46,7 +51,7 @@ while (($# > 0)); do
             exit 0
             ;;
         *)
-            echo "ERROR: unknown option '$1'" >&2
+            echo "ERROR: unknown option '${1%%=*}'" >&2
             usage >&2
             exit 1
             ;;
