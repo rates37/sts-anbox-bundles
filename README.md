@@ -28,11 +28,13 @@ When a proxy is active, `generate-bundle.sh`:
 
 ## Quickstart
 
-Export your Ubuntu Pro token (never committed; `b/` is gitignored and `ua.yaml` is created `chmod 600`):
+Export your Ubuntu Pro token via the `UA_TOKEN` environment variable (preferred over `--ua-token`, which is visible in `ps` on shared hosts):
 
 ```bash
 export UA_TOKEN="<your-ubuntu-pro-token>"
 ```
+
+> **Secret handling:** Both `generate-bundle.sh` and `deploy-terraform.sh` run with `umask 077` and `chmod 700` on `b/<name>/`, so `ua.yaml`, `deploy.tfvars`, `tfplan`, and `terraform.tfstate` are owner-only (`0600`) from creation and excluded by `.gitignore`. Note that Terraform's `tfplan` and `terraform.tfstate` store `ubuntu_pro_token` in plaintext — treat `b/<name>/` as sensitive and delete it once torn down.
 
 ### Generate only (inspect before deploying)
 

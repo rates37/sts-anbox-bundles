@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=module_defaults
@@ -15,6 +16,7 @@ DRY_RUN=false
 RUN_DEPLOY=false
 REPLAY=false
 LIST_BUNDLES=false
+DEBUG_TRACE=false
 
 CORE_ONLY=false
 ENABLE_HA=false
@@ -50,7 +52,8 @@ OPTIONS:
   --core                         Deploy 'anbox-cloud-core' (no streaming stack).
   -c, --channel <channel>        Anbox Cloud bundle channel (default: ${ANBOX_CHANNEL}).
   -s, --series <series>          Ubuntu series for machines (default: ${ANBOX_SERIES}).
-  --ua-token <token>             Ubuntu Pro token (or set UA_TOKEN env var).
+  --ua-token <token>             Ubuntu Pro token (prefer exporting UA_TOKEN env var;
+                                 CLI arguments are visible in 'ps').
                                  Requires a full Ubuntu Pro subscription (not Infra-only).
 
   --lxd-units <N>                Number of LXD worker units (default: ${LXD_UNITS}).
@@ -83,53 +86,66 @@ EXAMPLES:
 EOF
 }
 
-escape_sed_replacement() {
-    # Escape \, &, and | for safe use with sed 's|...|...|g'
-    printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
-}
-
 render_overlay() {
     local template="$1"
     local dest="$2"
-    cp "${SCRIPT_DIR}/overlays/${template}" "${dest}"
 
-    local ua_esc series_esc ctrl_esc lxd_esc lxd_units_esc lxd_storage_esc
-    local proxy_esc no_proxy_esc ha_ams_esc ha_etcd_esc ha_stream_esc
-    local mc_ch_esc mc_units_esc mc_cons_esc mc_osd_esc
+    # Disable xtrace while handling UA_TOKEN so --debug never logs the secret,
+    # and pass values via environment variables so UA_TOKEN never appears in argv/ps.
+    local had_xtrace=false
+    if [[ $- == *x* ]]; then
+        had_xtrace=true
+        { set +x; } 2>/dev/null
+    fi
 
-    ua_esc=$(escape_sed_replacement "${UA_TOKEN_VAL}")
-    series_esc=$(escape_sed_replacement "${ANBOX_SERIES}")
-    ctrl_esc=$(escape_sed_replacement "${CONTROL_CONSTRAINTS}")
-    lxd_esc=$(escape_sed_replacement "${LXD_CONSTRAINTS}")
-    lxd_units_esc=$(escape_sed_replacement "${LXD_UNITS}")
-    lxd_storage_esc=$(escape_sed_replacement "${LXD_STORAGE}")
-    proxy_esc=$(escape_sed_replacement "${PROXY_URL}")
-    no_proxy_esc=$(escape_sed_replacement "${RESOLVED_NO_PROXY}")
-    ha_ams_esc=$(escape_sed_replacement "${HA_AMS_UNITS}")
-    ha_etcd_esc=$(escape_sed_replacement "${HA_ETCD_UNITS}")
-    ha_stream_esc=$(escape_sed_replacement "${HA_STREAMING_UNITS}")
-    mc_ch_esc=$(escape_sed_replacement "${MICROCEPH_CHANNEL}")
-    mc_units_esc=$(escape_sed_replacement "${MICROCEPH_UNITS}")
-    mc_cons_esc=$(escape_sed_replacement "${MICROCEPH_CONSTRAINTS}")
-    mc_osd_esc=$(escape_sed_replacement "${MICROCEPH_OSD_STORAGE}")
+    STS_UA_TOKEN="${UA_TOKEN_VAL}" \
+    STS_SERIES="${ANBOX_SERIES}" \
+    STS_CONTROL_CONSTRAINTS="${CONTROL_CONSTRAINTS}" \
+    STS_LXD_CONSTRAINTS="${LXD_CONSTRAINTS}" \
+    STS_LXD_UNITS="${LXD_UNITS}" \
+    STS_LXD_STORAGE="${LXD_STORAGE}" \
+    STS_PROXY_URL="${PROXY_URL}" \
+    STS_NO_PROXY="${RESOLVED_NO_PROXY}" \
+    STS_HA_AMS_UNITS="${HA_AMS_UNITS}" \
+    STS_HA_ETCD_UNITS="${HA_ETCD_UNITS}" \
+    STS_HA_STREAMING_UNITS="${HA_STREAMING_UNITS}" \
+    STS_MICROCEPH_CHANNEL="${MICROCEPH_CHANNEL}" \
+    STS_MICROCEPH_UNITS="${MICROCEPH_UNITS}" \
+    STS_MICROCEPH_CONSTRAINTS="${MICROCEPH_CONSTRAINTS}" \
+    STS_MICROCEPH_OSD_STORAGE="${MICROCEPH_OSD_STORAGE}" \
+    python3 -c '
+import json, os, sys
+src, dst = sys.argv[1], sys.argv[2]
+mapping = {
+    "__UA_TOKEN__": os.environ["STS_UA_TOKEN"],
+    "__SERIES__": os.environ["STS_SERIES"],
+    "__CONTROL_CONSTRAINTS__": os.environ["STS_CONTROL_CONSTRAINTS"],
+    "__LXD_CONSTRAINTS__": os.environ["STS_LXD_CONSTRAINTS"],
+    "__LXD_UNITS__": os.environ["STS_LXD_UNITS"],
+    "__LXD_STORAGE__": os.environ["STS_LXD_STORAGE"],
+    "__PROXY_URL__": os.environ["STS_PROXY_URL"],
+    "__NO_PROXY__": os.environ["STS_NO_PROXY"],
+    "__HA_AMS_UNITS__": os.environ["STS_HA_AMS_UNITS"],
+    "__HA_ETCD_UNITS__": os.environ["STS_HA_ETCD_UNITS"],
+    "__HA_STREAMING_UNITS__": os.environ["STS_HA_STREAMING_UNITS"],
+    "__MICROCEPH_CHANNEL__": os.environ["STS_MICROCEPH_CHANNEL"],
+    "__MICROCEPH_UNITS__": os.environ["STS_MICROCEPH_UNITS"],
+    "__MICROCEPH_CONSTRAINTS__": os.environ["STS_MICROCEPH_CONSTRAINTS"],
+    "__MICROCEPH_OSD_STORAGE__": os.environ["STS_MICROCEPH_OSD_STORAGE"],
+}
+with open(src, "r", encoding="utf-8") as fh:
+    text = fh.read()
+for key, val in mapping.items():
+    # JSON-escape values inside double-quoted YAML scalars to prevent YAML injection
+    text = text.replace(f"\"{key}\"", json.dumps(val))
+    text = text.replace(key, val)
+with open(dst, "w", encoding="utf-8") as fh:
+    fh.write(text)
+' "${SCRIPT_DIR}/overlays/${template}" "${dest}"
 
-    sed -i \
-        -e "s|__UA_TOKEN__|${ua_esc}|g" \
-        -e "s|__SERIES__|${series_esc}|g" \
-        -e "s|__CONTROL_CONSTRAINTS__|${ctrl_esc}|g" \
-        -e "s|__LXD_CONSTRAINTS__|${lxd_esc}|g" \
-        -e "s|__LXD_UNITS__|${lxd_units_esc}|g" \
-        -e "s|__LXD_STORAGE__|${lxd_storage_esc}|g" \
-        -e "s|__PROXY_URL__|${proxy_esc}|g" \
-        -e "s|__NO_PROXY__|${no_proxy_esc}|g" \
-        -e "s|__HA_AMS_UNITS__|${ha_ams_esc}|g" \
-        -e "s|__HA_ETCD_UNITS__|${ha_etcd_esc}|g" \
-        -e "s|__HA_STREAMING_UNITS__|${ha_stream_esc}|g" \
-        -e "s|__MICROCEPH_CHANNEL__|${mc_ch_esc}|g" \
-        -e "s|__MICROCEPH_UNITS__|${mc_units_esc}|g" \
-        -e "s|__MICROCEPH_CONSTRAINTS__|${mc_cons_esc}|g" \
-        -e "s|__MICROCEPH_OSD_STORAGE__|${mc_osd_esc}|g" \
-        "${dest}"
+    if ${had_xtrace}; then
+        set -x
+    fi
 }
 
 detect_proxy() {
@@ -334,7 +350,7 @@ while (($# > 0)); do
             shift
             ;;
         --debug)
-            set -x
+            DEBUG_TRACE=true
             ;;
         -h|--help)
             usage
@@ -348,6 +364,11 @@ while (($# > 0)); do
     esac
     shift
 done
+
+# Enable xtrace only after argument parsing so --ua-token is never traced
+if ${DEBUG_TRACE}; then
+    set -x
+fi
 
 BUNDLES_ROOT="${SCRIPT_DIR}/b"
 
@@ -385,10 +406,14 @@ if ${REPLAY}; then
     exit 0
 fi
 
-# Validate options
+# Validate options (disable xtrace while checking UA_TOKEN_VAL)
+{ set +x; } 2>/dev/null
 if [[ -z "${UA_TOKEN_VAL}" ]]; then
-    echo "ERROR: Ubuntu Pro token is required. Pass --ua-token <token> or export UA_TOKEN." >&2
+    echo "ERROR: Ubuntu Pro token is required. Export UA_TOKEN (preferred) or pass --ua-token <token>." >&2
     exit 1
+fi
+if ${DEBUG_TRACE}; then
+    set -x
 fi
 
 if ! [[ "${LXD_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
@@ -529,6 +554,7 @@ fi
 
 # Render overlays into BUNDLE_DIR/o/
 mkdir -p "${BUNDLE_DIR}/o"
+chmod 700 "${BUNDLE_DIR}"
 rm -rf "${BUNDLE_DIR}/o/"*
 
 DEPLOY_TARGET="${UPSTREAM_BUNDLE} --channel ${ANBOX_CHANNEL}"
@@ -555,7 +581,8 @@ if unrendered=$(grep -rn '__[A-Z0-9_]*__' "${BUNDLE_DIR}/o" 2>/dev/null); then
     exit 1
 fi
 
-# Save commands for replayability
+# Save commands for replayability (disable xtrace while redacting UA_TOKEN_VAL)
+{ set +x; } 2>/dev/null
 {
     printf '%s' "${SCRIPT_DIR}/generate-bundle.sh"
     for arg in "${CACHED_ARGS[@]}"; do
@@ -567,6 +594,9 @@ fi
     done
     printf '\n'
 } > "${BUNDLE_DIR}/generate-command"
+if ${DEBUG_TRACE}; then
+    set -x
+fi
 
 if ((${#MODEL_CONFIG_ARGS[@]} > 0)); then
     {

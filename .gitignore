@@ -1,5 +1,13 @@
-# Generated bundles and overlays (may contain Ubuntu Pro tokens)
+# Generated bundles, Terraform workspaces, and secrets (may contain Ubuntu Pro tokens)
 b/
+ua.yaml
+*.tfvars
+*.tfvars.json
+*.tfstate
+*.tfstate.*
+tfplan
+.terraform/
+.terraform.lock.hcl
 *.swp
 *.bak
 __pycache__/
