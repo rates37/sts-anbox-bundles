@@ -15,8 +15,10 @@ DO_DESTROY=false
 LIST_DEPLOYMENTS=false
 DEBUG_TRACE=false
 
-TF_REF="${TF_REPO_REF}"
+TF_REF=""
+TF_REF_EXPLICIT=false
 TF_LOCAL_DIR=""
+RECLONE=false
 CHANNEL="${TF_ANBOX_CHANNEL}"
 BASE="${TF_BASE}"
 CONSTRAINTS="${TF_CONSTRAINTS}"
@@ -56,10 +58,12 @@ OPTIONS:
       --list                     List existing Terraform workspaces under b/.
 
   -c, --channel <channel>        Anbox Cloud charm channel (default: ${TF_ANBOX_CHANNEL}).
-      --ref <git-ref>            anbox-cloud-terraform branch or tag (default: ${TF_REPO_REF}).
-                                 For 1.30.x, use e.g. --ref v1.30.1 -c 1.30/stable.
+      --ref <git-ref>            anbox-cloud-terraform branch or tag. Defaults to
+                                 '${TF_REPO_REF_1_30}' for 1.30/* channels, otherwise '${TF_REPO_REF}'.
       --tf-dir <path>            Copy an existing local anbox-cloud-terraform checkout
                                  instead of cloning from GitHub.
+      --reclone                  Re-clone/re-copy the Terraform workspace when switching
+                                 --ref or --tf-dir (preserves terraform.tfstate*).
   -b, --base <base>              Ubuntu base (default: ${TF_BASE}).
       --ua-token <token>         Ubuntu Pro token (prefer exporting UA_TOKEN env var;
                                  CLI arguments are visible in 'ps').
@@ -370,12 +374,16 @@ while (($# > 0)); do
         --ref)
             require_arg "$@"
             TF_REF="$2"
+            TF_REF_EXPLICIT=true
             shift
             ;;
         --tf-dir)
             require_arg "$@"
             TF_LOCAL_DIR="$2"
             shift
+            ;;
+        --reclone)
+            RECLONE=true
             ;;
         -b|--base)
             require_arg "$@"
@@ -525,6 +533,21 @@ if ((${#SUBCLUSTERS[@]} == 0)); then
     SUBCLUSTERS=("a")
 fi
 
+# Derive default anbox-cloud-terraform ref from channel when --ref is not given
+if ! ${TF_REF_EXPLICIT}; then
+    if [[ "${CHANNEL}" == 1.30/* ]]; then
+        TF_REF="${TF_REPO_REF_1_30}"
+    else
+        TF_REF="${TF_REPO_REF}"
+    fi
+fi
+
+if [[ -n "${TF_LOCAL_DIR}" ]]; then
+    DESIRED_TF_SOURCE="local:${TF_LOCAL_DIR}"
+else
+    DESIRED_TF_SOURCE="ref:${TF_REF}"
+fi
+
 detect_ssh_key
 if [[ -n "${SSH_KEY_PATH}" && ! -f "${SSH_KEY_PATH}" ]]; then
     echo "ERROR: SSH public key file not found: ${SSH_KEY_PATH}" >&2
@@ -625,7 +648,7 @@ if ${DRY_RUN}; then
         write_model_override_tf "${PREVIEW_DIR}/registry_sts_override.tf" "registry"
     fi
 
-    echo "Dry-run generated Terraform files in ${WORK_DIR}:"
+    echo "Dry-run generated Terraform files in ${WORK_DIR} (channel: ${CHANNEL}, source: ${DESIRED_TF_SOURCE}):"
     echo "  + deploy.tfvars.json (chmod 600)"
     echo "  + overrides-preview/controller_sts_override.tf"
     echo "  + overrides-preview/subcluster_sts_override.tf"
@@ -641,8 +664,43 @@ fi
 
 check_proxy_anbox_access
 
-# Prepare upstream anbox-cloud-terraform checkout
-if [[ ! -d "${TF_WORK_DIR}" ]]; then
+# Prepare upstream anbox-cloud-terraform checkout (tracking source ref in tf-ref)
+TF_REF_FILE="${WORK_DIR}/tf-ref"
+if [[ -d "${TF_WORK_DIR}" ]]; then
+    RECORDED_TF_SOURCE=""
+    [[ -f "${TF_REF_FILE}" ]] && RECORDED_TF_SOURCE="$(cat "${TF_REF_FILE}")"
+
+    if ${RECLONE}; then
+        echo "INFO: --reclone requested; refreshing ${TF_WORK_DIR} while preserving terraform.tfstate*..."
+        STATE_BACKUP="$(mktemp -d "${WORK_DIR}/state-backup.XXXXXX")"
+        shopt -s nullglob
+        for sf in "${TF_WORK_DIR}"/terraform.tfstate*; do
+            cp -a "${sf}" "${STATE_BACKUP}/"
+        done
+        shopt -u nullglob
+        rm -rf "${TF_WORK_DIR}"
+        if [[ -n "${TF_LOCAL_DIR}" ]]; then
+            cp -r "${TF_LOCAL_DIR}" "${TF_WORK_DIR}"
+        else
+            git clone --depth 1 --branch "${TF_REF}" "${TF_REPO_URL}" "${TF_WORK_DIR}"
+        fi
+        shopt -s nullglob
+        for sf in "${STATE_BACKUP}"/terraform.tfstate*; do
+            cp -a "${sf}" "${TF_WORK_DIR}/"
+        done
+        shopt -u nullglob
+        rm -rf "${STATE_BACKUP}"
+        printf '%s\n' "${DESIRED_TF_SOURCE}" > "${TF_REF_FILE}"
+    else
+        if [[ -n "${RECORDED_TF_SOURCE}" && "${RECORDED_TF_SOURCE}" != "${DESIRED_TF_SOURCE}" ]] && \
+           { ${TF_REF_EXPLICIT} || [[ -n "${TF_LOCAL_DIR}" ]]; }; then
+            echo "ERROR: existing workspace '${DEPLOY_NAME}' uses '${RECORDED_TF_SOURCE}', but '${DESIRED_TF_SOURCE}' was requested." >&2
+            echo "       Re-run with --reclone to switch refs (preserves terraform.tfstate*), or use a new -n <name>." >&2
+            exit 1
+        fi
+        echo "INFO: reusing existing Terraform workspace at ${TF_WORK_DIR} (${RECORDED_TF_SOURCE:-unknown ref})"
+    fi
+else
     if [[ -n "${TF_LOCAL_DIR}" ]]; then
         echo "INFO: copying local anbox-cloud-terraform from ${TF_LOCAL_DIR}..."
         cp -r "${TF_LOCAL_DIR}" "${TF_WORK_DIR}"
@@ -650,8 +708,22 @@ if [[ ! -d "${TF_WORK_DIR}" ]]; then
         echo "INFO: cloning ${TF_REPO_URL} (ref: ${TF_REF}) into ${TF_WORK_DIR}..."
         git clone --depth 1 --branch "${TF_REF}" "${TF_REPO_URL}" "${TF_WORK_DIR}"
     fi
-else
-    echo "INFO: reusing existing Terraform workspace at ${TF_WORK_DIR}"
+    printf '%s\n' "${DESIRED_TF_SOURCE}" > "${TF_REF_FILE}"
+fi
+
+# Warn if using 'main' against a channel track different from upstream variables.tf default
+if [[ "${TF_REF}" == "main" && -z "${TF_LOCAL_DIR}" && -f "${TF_WORK_DIR}/variables.tf" ]]; then
+    UPSTREAM_DEFAULT_CH="$(awk '
+        /variable "anbox_channel"/ { in_blk=1 }
+        in_blk && /default[[:space:]]*=/ {
+            if (match($0, /"[^"]+"/)) { print substr($0, RSTART+1, RLENGTH-2); exit }
+        }
+        in_blk && /^\}/ { in_blk=0 }
+    ' "${TF_WORK_DIR}/variables.tf")"
+    if [[ -n "${UPSTREAM_DEFAULT_CH}" && "${CHANNEL%%/*}" != "${UPSTREAM_DEFAULT_CH%%/*}" ]]; then
+        echo "WARNING: using anbox-cloud-terraform ref 'main' (defaults to ${UPSTREAM_DEFAULT_CH}) with channel '${CHANNEL}'." >&2
+        echo "         Consider pinning a matching --ref tag (e.g. --ref v${CHANNEL%%/*}.x) to avoid upstream drift." >&2
+    fi
 fi
 
 # Inject Terraform override files into each module

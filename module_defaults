@@ -29,6 +29,7 @@ DEFAULT_MODEL_CONFIG="test-mode=true"
 # Terraform mode defaults (for Anbox Cloud >= 1.30 via anbox-cloud-terraform)
 TF_REPO_URL="https://github.com/canonical/anbox-cloud-terraform.git"
 TF_REPO_REF="main"
+TF_REPO_REF_1_30="v1.30.1"
 TF_ANBOX_CHANNEL="1.30/stable"
 TF_BASE="ubuntu@24.04"
 TF_CONSTRAINTS="arch=amd64"

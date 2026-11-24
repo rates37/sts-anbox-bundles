@@ -108,11 +108,13 @@ export UA_TOKEN="<your-ubuntu-pro-token>"
 
 ### Deploy a pinned tag or pre-release channel
 
-```bash
-# Pinned 1.30.1 Terraform tag
-./deploy-terraform.sh -n tf-anbox-130 --ref v1.30.1 -c 1.30/stable --enable-lb --run
+For `1.30/*` channels, `--ref` automatically defaults to `v1.30.1`; other channels default to `main`. To switch `--ref` on an existing workspace, pass `--reclone` (preserves `terraform.tfstate*`):
 
-# Pre-release / edge channel (e.g. 1.31/beta or 1.32/edge)
+```bash
+# Pinned 1.30.1 Terraform tag (automatic for 1.30/stable)
+./deploy-terraform.sh -n tf-anbox-130 -c 1.30/stable --enable-lb --run
+
+# Pre-release / edge channel (e.g. 1.31/beta or 1.32/edge on main)
 ./deploy-terraform.sh -n tf-anbox-beta -c 1.31/beta --enable-lb --run
 ```
 
