@@ -19,6 +19,7 @@ TF_REF=""
 TF_REF_EXPLICIT=false
 TF_LOCAL_DIR=""
 RECLONE=false
+FORCE_CHANGE=false
 CHANNEL="${TF_ANBOX_CHANNEL}"
 BASE="${TF_BASE}"
 CONSTRAINTS="${TF_CONSTRAINTS}"
@@ -71,6 +72,8 @@ OPTIONS:
                                  instead of cloning from GitHub.
       --reclone                  Re-clone/re-copy the Terraform workspace when switching
                                  --ref or --tf-dir (preserves terraform.tfstate*).
+      --force                    Allow destructive deploy-time-only changes (e.g. changing
+                                 --lxd-storage on an existing deployment).
   -b, --base <base>              Ubuntu base (default: ${TF_BASE}).
       --ua-token <token>         Ubuntu Pro token (prefer exporting UA_TOKEN env var;
                                  CLI arguments are visible in 'ps').
@@ -251,6 +254,28 @@ EOF
     fi
 }
 
+check_upstream_override_drift() {
+    local cp_tf="${TF_WORK_DIR}/modules/subcluster/control_plane.tf"
+    [[ -f "${cp_tf}" && -n "${PROXY_URL}" ]] || return 0
+
+    python3 -c '
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"resource\s+\"juju_application\"\s+\"ams\"\s*\{(.*?)\n\}", text, re.S)
+if not m:
+    sys.exit(0)
+cm = re.search(r"config\s*=\s*\{(.*?)\}", m.group(1), re.S)
+if not cm:
+    sys.exit(0)
+keys = set(re.findall(r"^\s*([A-Za-z0-9_-]+)\s*=", cm.group(1), re.M))
+known = {"use_embedded_etcd", "snap_risk_level", "ua_token", "log_level"}
+extra = sorted(keys - known)
+if extra:
+    print(f"WARNING: upstream juju_application.ams config has new key(s) not in sts_override.tf: {extra}", file=sys.stderr)
+    print("         Review modules/subcluster/control_plane.tf and update build_subcluster_extra_overrides.", file=sys.stderr)
+' "${cp_tf}"
+}
+
 copy_local_tf_dir() {
     local src="$1"
     local dst="$2"
@@ -375,6 +400,7 @@ EOF
         lxd_storage_q="$(hcl_quote "${LXD_STORAGE}")"
         cat <<EOF
 
+// Intentionally replaces upstream's local.is_aws storage_directives on OpenStack/PS6/PS7.
 resource "juju_application" "lxd" {
   storage_directives = { "pool" = ${lxd_storage_q} }
 }
@@ -450,6 +476,9 @@ while (($# > 0)); do
             ;;
         --reclone)
             RECLONE=true
+            ;;
+        --force)
+            FORCE_CHANGE=true
             ;;
         -b|--base)
             require_arg "$@"
@@ -847,7 +876,21 @@ if [[ "${TF_REF}" == "main" && -z "${TF_LOCAL_DIR}" && -f "${TF_WORK_DIR}/variab
     fi
 fi
 
+# Guard against changing deploy-time-only --lxd-storage on an existing Terraform state (M6)
+LXD_STORAGE_FILE="${WORK_DIR}/lxd-storage"
+if [[ -f "${TF_WORK_DIR}/terraform.tfstate" && -s "${TF_WORK_DIR}/terraform.tfstate" && -f "${LXD_STORAGE_FILE}" ]]; then
+    RECORDED_LXD_STORAGE="$(cat "${LXD_STORAGE_FILE}")"
+    if [[ "${RECORDED_LXD_STORAGE}" != "${LXD_STORAGE}" ]] && ! ${FORCE_CHANGE}; then
+        echo "ERROR: --lxd-storage changed from '${RECORDED_LXD_STORAGE:-<none>}' to '${LXD_STORAGE:-<none>}' on an existing deployment." >&2
+        echo "       Changing storage_directives forces replacement of the 'lxd' application and all instances." >&2
+        echo "       Pass --force if you intentionally want to replace 'lxd'." >&2
+        exit 1
+    fi
+fi
+printf '%s\n' "${LXD_STORAGE}" > "${LXD_STORAGE_FILE}"
+
 # Inject Terraform override files into each module
+check_upstream_override_drift
 write_model_override_tf "${TF_WORK_DIR}/modules/controller/sts_override.tf" "controller"
 write_model_override_tf "${TF_WORK_DIR}/modules/subcluster/sts_override.tf" "subcluster" "${SUBCLUSTER_EXTRA}"
 if [[ -d "${TF_WORK_DIR}/modules/registry" ]]; then
@@ -856,11 +899,12 @@ fi
 
 # Save helper commands
 cat > "${WORK_DIR}/plan-command" <<EOF
-terraform -chdir=${TF_WORK_DIR} init -upgrade=false
+terraform -chdir=${TF_WORK_DIR} init
 terraform -chdir=${TF_WORK_DIR} plan -out=tfplan -var-file=${TFVARS_FILE}
 EOF
 
 cat > "${WORK_DIR}/apply-command" <<EOF
+# Re-run plan-command first if state or tfvars changed since planning.
 terraform -chdir=${TF_WORK_DIR} apply -parallelism=1 tfplan
 EOF
 
@@ -900,11 +944,15 @@ fi
 
 echo ""
 echo "Post-Deployment Info/Actions:"
+if [[ -z "${SSH_KEY_PATH}" ]]; then
+    echo "  - WARNING: No SSH public key was configured; 'juju ssh' and './configure --reboot/--fix-modules'"
+    echo "             will fail until you run 'juju add-ssh-key' or re-run with --ssh-key <path>."
+fi
 if ! ${DO_PLAN}; then
     echo "  - Plan:    bash ${WORK_DIR}/plan-command"
 fi
 if ! ${DO_APPLY}; then
-    echo "  - Apply:   bash ${WORK_DIR}/apply-command"
+    echo "  - Apply:   bash ${WORK_DIR}/apply-command  (re-plan first if state changed)"
 fi
 echo "  - Monitor controller: juju status -m anbox-controller --color"
 for sc in "${SUBCLUSTERS[@]}"; do
