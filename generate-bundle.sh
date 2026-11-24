@@ -8,7 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Runtime options
 BUNDLE_NAME=""
 CLOUD_NAME=""
+MODEL_NAME=""
 CREATE_MODEL=true
+NO_CREATE_MODEL_EXPLICIT=false
 DRY_RUN=false
 RUN_DEPLOY=false
 REPLAY=false
@@ -250,6 +252,7 @@ while (($# > 0)); do
             ;;
         --no-create-model)
             CREATE_MODEL=false
+            NO_CREATE_MODEL_EXPLICIT=true
             ;;
         --dry-run)
             DRY_RUN=true
@@ -393,6 +396,11 @@ if ! [[ "${LXD_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 
+if ${RUN_DEPLOY} && ! ${DRY_RUN} && [[ -z "${BUNDLE_NAME}" ]] && ! ${NO_CREATE_MODEL_EXPLICIT}; then
+    echo "ERROR: refusing to --run without -n/--name (pass -n <model>, or pass --no-create-model explicitly to target the current model)" >&2
+    exit 1
+fi
+
 if [[ -n "${LXD_STORAGE}" ]] && ${ENABLE_CEPH}; then
     echo "ERROR: --lxd-storage (local ZFS block storage) and --ceph/--microceph are mutually exclusive" >&2
     exit 1
@@ -480,6 +488,10 @@ if ((${#EXTRA_MODEL_CONFIG[@]} > 0)); then
 fi
 
 # Create/switch Juju model and apply model-config (unless --dry-run)
+if [[ -n "${BUNDLE_NAME}" ]]; then
+    MODEL_NAME="${BUNDLE_NAME}"
+fi
+
 if ! ${DRY_RUN}; then
     check_proxy_anbox_access
 
@@ -500,11 +512,18 @@ if ! ${DRY_RUN}; then
                 juju add-model "${BUNDLE_NAME}"
             fi
         fi
+    elif [[ -z "${MODEL_NAME}" ]]; then
+        MODEL_NAME="$(juju switch 2>/dev/null | awk -F: '{print $2}' | awk '{print $1}')"
+        if [[ -z "${MODEL_NAME}" ]]; then
+            echo "ERROR: could not determine current Juju model. Pass -n <name> or select a model with 'juju switch'." >&2
+            exit 1
+        fi
+        echo "INFO: targeting current Juju model '${MODEL_NAME}'"
     fi
 
     if ((${#MODEL_CONFIG_ARGS[@]} > 0)); then
-        echo "INFO: applying Juju model-config"
-        juju model-config "${MODEL_CONFIG_ARGS[@]}"
+        echo "INFO: applying Juju model-config to model '${MODEL_NAME}'"
+        juju model-config -m "${MODEL_NAME}" "${MODEL_CONFIG_ARGS[@]}"
     fi
 fi
 
@@ -552,6 +571,9 @@ fi
 if ((${#MODEL_CONFIG_ARGS[@]} > 0)); then
     {
         printf 'juju model-config'
+        if [[ -n "${MODEL_NAME}" ]]; then
+            printf ' -m %q' "${MODEL_NAME}"
+        fi
         for kv in "${MODEL_CONFIG_ARGS[@]}"; do
             printf ' %q' "${kv}"
         done
@@ -560,7 +582,11 @@ if ((${#MODEL_CONFIG_ARGS[@]} > 0)); then
 fi
 
 {
-    printf 'juju deploy %s' "${DEPLOY_TARGET}"
+    printf 'juju deploy'
+    if [[ -n "${MODEL_NAME}" ]]; then
+        printf ' -m %q' "${MODEL_NAME}"
+    fi
+    printf ' %s' "${DEPLOY_TARGET}"
     for path in "${OVERLAY_PATHS[@]}"; do
         printf ' \\\n  --overlay %q' "${path}"
     done
@@ -580,8 +606,8 @@ echo "Command to deploy:"
 cat "${BUNDLE_DIR}/command"
 
 POST_MSGS+=(
-    "Monitor deployment: watch -c juju status --color --relations=true"
-    "Once deployed, run: ./configure${BUNDLE_NAME:+ -m ${BUNDLE_NAME}}"
+    "Monitor deployment: watch -c juju status${MODEL_NAME:+ -m ${MODEL_NAME}} --color --relations=true"
+    "Once deployed, run: ./configure${MODEL_NAME:+ -m ${MODEL_NAME}}"
 )
 
 echo ""
