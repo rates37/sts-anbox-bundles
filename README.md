@@ -3,7 +3,7 @@
 Minimal `stsstack-bundles`-style generator for deploying **charmed Anbox Cloud** on **PS7**, **PS6**, and other Juju 3.x clouds:
 
 - **Anbox Cloud `<= 1.29`** ([generate-bundle.sh](./generate-bundle.sh)): deploys the official Charmhub bundle (`anbox-cloud` or `anbox-cloud-core`) with dynamically rendered Juju overlays (Ubuntu Pro token, machine constraints, LXD scaling/storage, PS7 proxy settings, HA, and Ceph/MicroCeph).
-- **Anbox Cloud `>= 1.30`** ([deploy-terraform.sh](./deploy-terraform.sh)): wraps the official upstream [`anbox-cloud-terraform`](https://github.com/canonical/anbox-cloud-terraform) plan (the only supported charm-based deployment method from 1.30.0 onward) with generated `deploy.tfvars` and Terraform module overrides for PS7 proxy/cloud-init, AMS proxy, LXD constraints, and LXD storage.
+- **Anbox Cloud `>= 1.30`** ([deploy-terraform.sh](./deploy-terraform.sh)): wraps the official upstream [`anbox-cloud-terraform`](https://github.com/canonical/anbox-cloud-terraform) plan (the only supported charm-based deployment method from 1.30.0 onward) with generated `deploy.tfvars.json` and Terraform module overrides for PS7 proxy/cloud-init, AMS proxy, LXD constraints, and LXD storage.
 
 ## Prerequisites
 
@@ -34,7 +34,7 @@ Export your Ubuntu Pro token via the `UA_TOKEN` environment variable (preferred 
 export UA_TOKEN="<your-ubuntu-pro-token>"
 ```
 
-> **Secret handling:** Both `generate-bundle.sh` and `deploy-terraform.sh` run with `umask 077` and `chmod 700` on `b/<name>/`, so `ua.yaml`, `deploy.tfvars`, `tfplan`, and `terraform.tfstate` are owner-only (`0600`) from creation and excluded by `.gitignore`. Note that Terraform's `tfplan` and `terraform.tfstate` store `ubuntu_pro_token` in plaintext — treat `b/<name>/` as sensitive and delete it once torn down.
+> **Secret handling:** Both `generate-bundle.sh` and `deploy-terraform.sh` run with `umask 077` and `chmod 700` on `b/<name>/`, so `ua.yaml`, `deploy.tfvars.json`, `tfplan`, and `terraform.tfstate` are owner-only (`0600`) from creation and excluded by `.gitignore`. Note that Terraform's `tfplan` and `terraform.tfstate` store `ubuntu_pro_token` in plaintext — treat `b/<name>/` as sensitive and delete it once torn down.
 
 ### Generate only (inspect before deploying)
 
@@ -86,9 +86,9 @@ export UA_TOKEN="<your-ubuntu-pro-token>"
 
 ## Quickstart: Terraform Mode (`>= 1.30`)
 
-`deploy-terraform.sh` clones `canonical/anbox-cloud-terraform` into `b/<name>/terraform/`, generates `b/<name>/deploy.tfvars` (`chmod 600`), and injects `sts_override.tf` into each module for PS7 proxy + `cloudinit-userdata` (`pro config set`), AMS proxy config, LXD machine constraints, and optional LXD storage.
+`deploy-terraform.sh` clones `canonical/anbox-cloud-terraform` into `b/<name>/terraform/`, generates `b/<name>/deploy.tfvars.json` (`chmod 600`), and injects `sts_override.tf` into each module for PS7 proxy + `cloudinit-userdata` (`pro config set`), AMS proxy config, LXD machine constraints, and optional LXD storage.
 
-### Dry-run (inspect generated `deploy.tfvars` and overrides)
+### Dry-run (inspect generated `deploy.tfvars.json` and overrides)
 
 ```bash
 ./deploy-terraform.sh -n tf-anbox -c 1.30/stable --dry-run
