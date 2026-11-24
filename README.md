@@ -88,7 +88,9 @@ export UA_TOKEN="<your-ubuntu-pro-token>"
 
 `deploy-terraform.sh` clones `canonical/anbox-cloud-terraform` into `b/<name>/terraform/`, generates `b/<name>/deploy.tfvars.json` (`chmod 600`), and injects `sts_override.tf` into each module for PS7 proxy + `cloudinit-userdata` (`pro config set`), AMS proxy config, LXD machine constraints (default `cores=8 mem=16G root-disk=100G`, merged by key with `--constraints`), and optional LXD storage.
 
-> **Note:** Changing `--constraints`, `--lxd-constraints`, or `--lxd-storage` on an existing Terraform deployment forces replacement of the affected machines/LXD application.
+> **Note:**
+> - Upstream `anbox-cloud-terraform` uses fixed Juju model names (`anbox-controller`, `anbox-subcluster-<suffix>`, `anbox-registry`), so **only one Terraform deployment is supported per Juju controller**. `deploy-terraform.sh` aborts before `apply` if any of those models already exist outside the current workspace's state.
+> - Changing `--constraints`, `--lxd-constraints`, or `--lxd-storage` on an existing Terraform deployment forces replacement of the affected machines/LXD application.
 
 ### Dry-run (inspect generated `deploy.tfvars.json` and overrides)
 

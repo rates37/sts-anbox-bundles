@@ -48,6 +48,10 @@ Deploy Anbox Cloud >= 1.30 on PS7, PS6, or any Juju 3.x cloud using the
 official upstream anbox-cloud-terraform plan with ProdStack proxy and
 constraint overrides.
 
+NOTE: Upstream anbox-cloud-terraform uses fixed Juju model names
+('anbox-controller', 'anbox-subcluster-<suffix>', 'anbox-registry'), so
+only one Terraform deployment is supported per Juju controller.
+
 OPTIONS:
   -n, --name <name>              Workspace name under b/<name> (default: ${DEPLOY_NAME}).
       --dry-run                  Generate deploy.tfvars and override files only;
@@ -198,6 +202,44 @@ detect_ssh_key() {
         SSH_KEY_PATH="${HOME}/.ssh/id_rsa.pub"
     else
         echo "WARNING: No Juju or ~/.ssh public key found; 'juju ssh' may fail unless --ssh-key is provided." >&2
+    fi
+}
+
+check_model_collisions() {
+    command -v juju &>/dev/null || return 0
+
+    local state_list
+    state_list="$(terraform -chdir="${TF_WORK_DIR}" state list 2>/dev/null || true)"
+
+    local -a checks=("anbox-controller:module.controller.juju_model.controller")
+    local sc
+    for sc in "${SUBCLUSTERS[@]}"; do
+        checks+=("anbox-subcluster-${sc}:module.subcluster[\"${sc}\"].juju_model.subcluster")
+    done
+    if ${DEPLOY_REGISTRY}; then
+        checks+=("anbox-registry:module.registry[0].juju_model.registry")
+    fi
+
+    local entry model_name tf_addr collision=false
+    for entry in "${checks[@]}"; do
+        model_name="${entry%%:*}"
+        tf_addr="${entry#*:}"
+        if juju show-model "${model_name}" &>/dev/null; then
+            if ! grep -Fqx "${tf_addr}" <<<"${state_list}"; then
+                echo "ERROR: Juju model '${model_name}' already exists on the current controller and is not managed by workspace '${DEPLOY_NAME}'." >&2
+                collision=true
+            fi
+        fi
+    done
+
+    if ${collision}; then
+        cat >&2 <<EOF
+ERROR: Upstream anbox-cloud-terraform uses fixed Juju model names, so only one
+       Terraform deployment is supported per Juju controller.
+       Reuse the existing workspace (-n <existing-name>) or destroy the existing
+       deployment before applying a new one.
+EOF
+        exit 1
     fi
 }
 
@@ -787,6 +829,7 @@ if ${DO_PLAN}; then
 fi
 
 if ${DO_APPLY}; then
+    check_model_collisions
     echo ""
     echo "INFO: running terraform apply -parallelism=1..."
     terraform -chdir="${TF_WORK_DIR}" apply -parallelism=1 tfplan
