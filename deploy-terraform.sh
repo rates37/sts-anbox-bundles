@@ -201,6 +201,22 @@ detect_ssh_key() {
     fi
 }
 
+copy_local_tf_dir() {
+    local src="$1"
+    local dst="$2"
+    python3 -c '
+import shutil, sys
+src, dst = sys.argv[1], sys.argv[2]
+ignore = shutil.ignore_patterns(
+    ".terraform", ".terraform.lock.hcl",
+    "*.tfstate", "*.tfstate.*",
+    "tfplan", "*.tfvars", "*.tfvars.json",
+    ".git",
+)
+shutil.copytree(src, dst, ignore=ignore)
+' "${src}" "${dst}"
+}
+
 hcl_quote() {
     # Produce a safely quoted HCL string literal (JSON escaping + HCL template escaping)
     STS_VAL="$1" python3 -c '
@@ -680,7 +696,7 @@ if [[ -d "${TF_WORK_DIR}" ]]; then
         shopt -u nullglob
         rm -rf "${TF_WORK_DIR}"
         if [[ -n "${TF_LOCAL_DIR}" ]]; then
-            cp -r "${TF_LOCAL_DIR}" "${TF_WORK_DIR}"
+            copy_local_tf_dir "${TF_LOCAL_DIR}" "${TF_WORK_DIR}"
         else
             git clone --depth 1 --branch "${TF_REF}" "${TF_REPO_URL}" "${TF_WORK_DIR}"
         fi
@@ -702,8 +718,8 @@ if [[ -d "${TF_WORK_DIR}" ]]; then
     fi
 else
     if [[ -n "${TF_LOCAL_DIR}" ]]; then
-        echo "INFO: copying local anbox-cloud-terraform from ${TF_LOCAL_DIR}..."
-        cp -r "${TF_LOCAL_DIR}" "${TF_WORK_DIR}"
+        echo "INFO: copying local anbox-cloud-terraform from ${TF_LOCAL_DIR} (excluding state/cache/secrets)..."
+        copy_local_tf_dir "${TF_LOCAL_DIR}" "${TF_WORK_DIR}"
     else
         echo "INFO: cloning ${TF_REPO_URL} (ref: ${TF_REF}) into ${TF_WORK_DIR}..."
         git clone --depth 1 --branch "${TF_REF}" "${TF_REPO_URL}" "${TF_WORK_DIR}"
