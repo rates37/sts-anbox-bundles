@@ -20,6 +20,7 @@ TF_LOCAL_DIR=""
 CHANNEL="${TF_ANBOX_CHANNEL}"
 BASE="${TF_BASE}"
 CONSTRAINTS="${TF_CONSTRAINTS}"
+LXD_CONSTRAINTS="${TF_LXD_CONSTRAINTS}"
 LXD_STORAGE=""
 SSH_KEY_PATH=""
 UA_TOKEN_VAL="${UA_TOKEN:-}"
@@ -67,9 +68,12 @@ OPTIONS:
 
       --subcluster <name>        Subcluster suffix (repeatable; default: "a" -> anbox-subcluster-a).
       --lxd-units <N>            LXD worker count per subcluster (default: ${LXD_UNITS}).
-      --lxd-constraints <str>    LXD machine constraints (default: "${LXD_CONSTRAINTS}").
+      --lxd-constraints <str>    LXD machine constraints (default: "${TF_LXD_CONSTRAINTS}").
+                                 NOTE: Changing constraints replaces existing LXD machines.
       --lxd-storage <pool,sz,n>  Juju storage directive for LXD pool (e.g. cinder,100G,1).
+                                 Deploy-time only; changing replaces the LXD application.
       --constraints <str>        General application constraints (default: "${TF_CONSTRAINTS}").
+                                 NOTE: Changing constraints replaces existing machines.
 
       --ha                       Enable HA mode (enable_ha = true).
       --enable-lb                Deploy HAProxy load balancer in anbox-controller.
@@ -288,7 +292,12 @@ build_subcluster_extra_overrides() {
 
     cat <<EOF
 resource "juju_machine" "lxd_node" {
-  constraints = join(" ", concat(var.constraints, ${lxd_list}))
+  // Merge by constraint key so LXD-specific constraints override general var.constraints
+  // without producing duplicate Juju constraint keys.
+  constraints = join(" ", values(merge(
+    { for c in var.constraints : split("=", c)[0] => c },
+    { for c in ${lxd_list} : split("=", c)[0] => c }
+  )))
 }
 EOF
 

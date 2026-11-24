@@ -32,4 +32,5 @@ TF_REPO_REF="main"
 TF_ANBOX_CHANNEL="1.30/stable"
 TF_BASE="ubuntu@24.04"
 TF_CONSTRAINTS="arch=amd64"
+TF_LXD_CONSTRAINTS="cores=8 mem=16G root-disk=100G"
 

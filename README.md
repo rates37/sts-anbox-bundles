@@ -86,7 +86,9 @@ export UA_TOKEN="<your-ubuntu-pro-token>"
 
 ## Quickstart: Terraform Mode (`>= 1.30`)
 
-`deploy-terraform.sh` clones `canonical/anbox-cloud-terraform` into `b/<name>/terraform/`, generates `b/<name>/deploy.tfvars.json` (`chmod 600`), and injects `sts_override.tf` into each module for PS7 proxy + `cloudinit-userdata` (`pro config set`), AMS proxy config, LXD machine constraints, and optional LXD storage.
+`deploy-terraform.sh` clones `canonical/anbox-cloud-terraform` into `b/<name>/terraform/`, generates `b/<name>/deploy.tfvars.json` (`chmod 600`), and injects `sts_override.tf` into each module for PS7 proxy + `cloudinit-userdata` (`pro config set`), AMS proxy config, LXD machine constraints (default `cores=8 mem=16G root-disk=100G`, merged by key with `--constraints`), and optional LXD storage.
+
+> **Note:** Changing `--constraints`, `--lxd-constraints`, or `--lxd-storage` on an existing Terraform deployment forces replacement of the affected machines/LXD application.
 
 ### Dry-run (inspect generated `deploy.tfvars.json` and overrides)
 
