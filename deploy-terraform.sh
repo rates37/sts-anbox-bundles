@@ -140,12 +140,21 @@ check_proxy_anbox_access() {
     [[ -n "${PROXY_URL}" ]] || return 0
     command -v curl &>/dev/null || return 0
 
-    local host code blocked=false
+    local host out code connect blocked=false unreachable=false
     for host in archive.anbox-cloud.io images.anbox-cloud.io; do
-        code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -x "${PROXY_URL}" "https://${host}/" 2>/dev/null || true)
-        if [[ "${code}" == "403" ]]; then
-            echo "WARNING: proxy ${PROXY_URL} returned HTTP 403 Forbidden for https://${host}/" >&2
+        # For HTTPS via an HTTP proxy, Squid's denial is returned on CONNECT
+        # and recorded by curl in %{http_connect} (while %{http_code} is 000).
+        out="$(curl -s -o /dev/null -w '%{http_code} %{http_connect}' --max-time 5 -x "${PROXY_URL}" "https://${host}/" 2>/dev/null || true)"
+        read -r code connect <<<"${out:-000 000}"
+        code="${code:-000}"
+        connect="${connect:-000}"
+
+        if [[ "${code}" == "403" || "${connect}" == "403" ]]; then
+            echo "WARNING: proxy ${PROXY_URL} returned HTTP 403 Forbidden for https://${host}/ (http=${code}, connect=${connect})" >&2
             blocked=true
+        elif [[ "${code}" == "000" && "${connect}" == "000" ]]; then
+            echo "WARNING: could not reach https://${host}/ via proxy ${PROXY_URL} (unreachable or timed out)" >&2
+            unreachable=true
         fi
     done
 
@@ -156,6 +165,8 @@ WARNING: One or more Anbox Cloud domains are blocked by ${PROXY_URL}.
          archive.anbox-cloud.io and images.anbox-cloud.io are allowlisted
          on the egress proxy (or an alternative --proxy is provided).
 EOF
+    elif ${unreachable}; then
+        echo "WARNING: Verify that ${PROXY_URL} is reachable from this host and your Juju model." >&2
     fi
 }
 
