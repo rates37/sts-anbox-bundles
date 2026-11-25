@@ -508,10 +508,27 @@ for kv in ${DEFAULT_MODEL_CONFIG}; do
     MODEL_CONFIG_ARGS+=("${kv}")
 done
 if [[ -n "${PROXY_URL}" ]]; then
-    # Ubuntu Pro CLI ('pro') ignores http_proxy/https_proxy env vars and only
-    # reads /etc/ubuntu-advantage/uaclient.conf, so configure it via cloud-init
-    # preruncmd before charm install hooks run.
-    PRO_CLOUDINIT_USERDATA="$(printf 'preruncmd:\n  - pro config set http_proxy=%s\n  - pro config set https_proxy=%s\n' "${PROXY_URL}" "${PROXY_URL}")"
+    # 1. Ubuntu Pro CLI ('pro') ignores http_proxy/https_proxy env vars and only
+    #    reads /etc/ubuntu-advantage/uaclient.conf.
+    # 2. The anbox-cloud-dashboard snap web service needs HTTPS_PROXY/NO_PROXY
+    #    in its systemd unit environment to reach login.ubuntu.com for Ubuntu One OAuth.
+    PRO_CLOUDINIT_USERDATA="$(cat <<EOF
+write_files:
+  - path: /etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d/proxy.conf
+    permissions: '0644'
+    content: |
+      [Service]
+      Environment=HTTP_PROXY=${PROXY_URL}
+      Environment=HTTPS_PROXY=${PROXY_URL}
+      Environment=NO_PROXY=${RESOLVED_NO_PROXY}
+      Environment=http_proxy=${PROXY_URL}
+      Environment=https_proxy=${PROXY_URL}
+      Environment=no_proxy=${RESOLVED_NO_PROXY}
+preruncmd:
+  - pro config set http_proxy=${PROXY_URL}
+  - pro config set https_proxy=${PROXY_URL}
+EOF
+)"
     MODEL_CONFIG_ARGS+=(
         "juju-http-proxy=${PROXY_URL}"
         "juju-https-proxy=${PROXY_URL}"

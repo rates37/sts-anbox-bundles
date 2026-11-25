@@ -21,10 +21,12 @@ Minimal `stsstack-bundles`-style generator for deploying **charmed Anbox Cloud**
 2. **PS7**: `http://egress.ps7.internal:3128` (tested via `nc -vz egress.ps7.internal 3128`)
 3. **PS6**: PS6 reproducer instances have direct internet egress, so `squid.internal:3128` is intentionally **not** auto-enabled (it blocks `archive.anbox-cloud.io` by default). Use `--proxy http://squid.internal:3128` only if you explicitly want to force it.
 
-When a proxy is active, `generate-bundle.sh`:
-- Applies Juju `model-config` (`juju-http-proxy`, `juju-https-proxy`, `juju-no-proxy`, `apt-http-proxy`, `apt-https-proxy`, `snap-http-proxy`, `snap-https-proxy`, plus `cloudinit-userdata` `preruncmd` to run `pro config set http_proxy`/`https_proxy` because `pro` ignores environment proxy variables).
-- Warns if the proxy returns HTTP `403` for `archive.anbox-cloud.io` or `images.anbox-cloud.io` (both domains must be allowlisted on the egress proxy for `pro enable anbox-cloud` and AMS image sync).
-- Generates `ams-proxy.yaml` setting `core.proxy_http`, `core.proxy_https`, and `core.proxy_ignore_hosts` on the `ams` charm so AMS can pull Android images through the proxy.
+When a proxy is active, `generate-bundle.sh` and `deploy-terraform.sh`:
+- Apply Juju `model-config` (`juju-http-proxy`, `juju-https-proxy`, `juju-no-proxy`, `apt-http-proxy`, `apt-https-proxy`, `snap-http-proxy`, `snap-https-proxy`), plus `cloudinit-userdata` to:
+  - Run `pro config set http_proxy`/`https_proxy` via `preruncmd` (because `pro` ignores environment proxy variables).
+  - Write `/etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d/proxy.conf` via `write_files` so the dashboard web service can reach `login.ubuntu.com` for Ubuntu One OAuth through the egress proxy.
+- Warn if the proxy returns HTTP `403` for `archive.anbox-cloud.io` or `images.anbox-cloud.io` (both domains must be allowlisted on the egress proxy for `pro enable anbox-cloud` and AMS image sync).
+- Configure `core.proxy_http`, `core.proxy_https`, and `core.proxy_ignore_hosts` (with CIDRs stripped, as AMS rejects CIDR notation) on the `ams` charm so AMS can pull Android images through the proxy.
 
 ## Quickstart
 
