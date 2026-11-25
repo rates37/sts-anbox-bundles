@@ -948,6 +948,12 @@ if ${DO_PLAN}; then
         exit 1
     fi
 
+    if [[ -n "${PROXY_URL}" ]]; then
+        export HTTP_PROXY="${PROXY_URL}" HTTPS_PROXY="${PROXY_URL}" NO_PROXY="${RESOLVED_NO_PROXY}"
+        export http_proxy="${PROXY_URL}" https_proxy="${PROXY_URL}" no_proxy="${RESOLVED_NO_PROXY}"
+    fi
+    export TF_REGISTRY_CLIENT_TIMEOUT="${TF_REGISTRY_CLIENT_TIMEOUT:-30}"
+
     echo ""
     echo "INFO: running terraform init..."
     terraform -chdir="${TF_WORK_DIR}" init
