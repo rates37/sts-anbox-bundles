@@ -105,7 +105,7 @@ render_overlay() {
     STS_LXD_UNITS="${LXD_UNITS}" \
     STS_LXD_STORAGE="${LXD_STORAGE}" \
     STS_PROXY_URL="${PROXY_URL}" \
-    STS_NO_PROXY="${RESOLVED_NO_PROXY}" \
+    STS_NO_PROXY="${AMS_NO_PROXY}" \
     STS_HA_AMS_UNITS="${HA_AMS_UNITS}" \
     STS_HA_ETCD_UNITS="${HA_ETCD_UNITS}" \
     STS_HA_STREAMING_UNITS="${HA_STREAMING_UNITS}" \
@@ -208,6 +208,15 @@ for part in sys.argv[1].split(","):
     if part and part not in seen:
         seen.add(part)
         out.append(part)
+print(",".join(out))
+' "$1"
+}
+
+filter_non_cidr_csv() {
+    # AMS core.proxy_ignore_hosts rejects CIDR entries (e.g. 10.0.0.0/8); keep only hosts/IPs
+    python3 -c '
+import sys
+out = [p.strip() for p in sys.argv[1].split(",") if p.strip() and "/" not in p]
 print(",".join(out))
 ' "$1"
 }
@@ -451,6 +460,7 @@ if [[ -n "${CUSTOM_NO_PROXY}" ]]; then
     RESOLVED_NO_PROXY="${RESOLVED_NO_PROXY},${CUSTOM_NO_PROXY}"
 fi
 RESOLVED_NO_PROXY="$(dedupe_csv "${RESOLVED_NO_PROXY}")"
+AMS_NO_PROXY="$(filter_non_cidr_csv "${RESOLVED_NO_PROXY}")"
 
 # Determine upstream Charmhub bundle name
 if ${CORE_ONLY}; then

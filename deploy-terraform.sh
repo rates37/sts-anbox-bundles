@@ -143,6 +143,15 @@ print(",".join(out))
 ' "$1"
 }
 
+filter_non_cidr_csv() {
+    # AMS core.proxy_ignore_hosts rejects CIDR entries (e.g. 10.0.0.0/8); keep only hosts/IPs
+    python3 -c '
+import sys
+out = [p.strip() for p in sys.argv[1].split(",") if p.strip() and "/" not in p]
+print(",".join(out))
+' "$1"
+}
+
 detect_proxy() {
     if ${DISABLE_PROXY}; then
         PROXY_URL=""
@@ -409,7 +418,7 @@ EOF
 
     if [[ -n "${PROXY_URL}" ]]; then
         proxy_hd="$(hcl_heredoc_escape "${PROXY_URL}")"
-        no_proxy_hd="$(hcl_heredoc_escape "${RESOLVED_NO_PROXY}")"
+        no_proxy_hd="$(hcl_heredoc_escape "${AMS_NO_PROXY}")"
         cat <<EOF
 
 resource "juju_application" "ams" {
@@ -703,6 +712,7 @@ if [[ -n "${CUSTOM_NO_PROXY}" ]]; then
     RESOLVED_NO_PROXY="${RESOLVED_NO_PROXY},${CUSTOM_NO_PROXY}"
 fi
 RESOLVED_NO_PROXY="$(dedupe_csv "${RESOLVED_NO_PROXY}")"
+AMS_NO_PROXY="$(filter_non_cidr_csv "${RESOLVED_NO_PROXY}")"
 
 mkdir -p "${WORK_DIR}"
 chmod 700 "${WORK_DIR}"
