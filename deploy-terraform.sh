@@ -365,20 +365,11 @@ resource "juju_model" "${resource_name}" {
     snap-http-proxy             = ${proxy_q}
     snap-https-proxy            = ${proxy_q}
     cloudinit-userdata          = <<-EOT
-      write_files:
-        - path: /etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d/proxy.conf
-          permissions: '0644'
-          content: |
-            [Service]
-            Environment=HTTP_PROXY=${proxy_hd}
-            Environment=HTTPS_PROXY=${proxy_hd}
-            Environment=NO_PROXY=${no_proxy_hd}
-            Environment=http_proxy=${proxy_hd}
-            Environment=https_proxy=${proxy_hd}
-            Environment=no_proxy=${no_proxy_hd}
       preruncmd:
         - pro config set http_proxy=${proxy_hd}
         - pro config set https_proxy=${proxy_hd}
+        - mkdir -p /etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d
+        - printf '[Service]\nEnvironment=HTTP_PROXY=%s\nEnvironment=HTTPS_PROXY=%s\nEnvironment=NO_PROXY=%s\nEnvironment=http_proxy=%s\nEnvironment=https_proxy=%s\nEnvironment=no_proxy=%s\n' '${proxy_hd}' '${proxy_hd}' '${no_proxy_hd}' '${proxy_hd}' '${proxy_hd}' '${no_proxy_hd}' > /etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d/proxy.conf
     EOT
   }
 }

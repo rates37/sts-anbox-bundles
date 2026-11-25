@@ -512,21 +512,13 @@ if [[ -n "${PROXY_URL}" ]]; then
     #    reads /etc/ubuntu-advantage/uaclient.conf.
     # 2. The anbox-cloud-dashboard snap web service needs HTTPS_PROXY/NO_PROXY
     #    in its systemd unit environment to reach login.ubuntu.com for Ubuntu One OAuth.
+    # Use preruncmd (not write_files), as Juju's cloudinit-userdata reliably executes preruncmd.
     PRO_CLOUDINIT_USERDATA="$(cat <<EOF
-write_files:
-  - path: /etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d/proxy.conf
-    permissions: '0644'
-    content: |
-      [Service]
-      Environment=HTTP_PROXY=${PROXY_URL}
-      Environment=HTTPS_PROXY=${PROXY_URL}
-      Environment=NO_PROXY=${RESOLVED_NO_PROXY}
-      Environment=http_proxy=${PROXY_URL}
-      Environment=https_proxy=${PROXY_URL}
-      Environment=no_proxy=${RESOLVED_NO_PROXY}
 preruncmd:
   - pro config set http_proxy=${PROXY_URL}
   - pro config set https_proxy=${PROXY_URL}
+  - mkdir -p /etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d
+  - printf '[Service]\nEnvironment=HTTP_PROXY=%s\nEnvironment=HTTPS_PROXY=%s\nEnvironment=NO_PROXY=%s\nEnvironment=http_proxy=%s\nEnvironment=https_proxy=%s\nEnvironment=no_proxy=%s\n' '${PROXY_URL}' '${PROXY_URL}' '${RESOLVED_NO_PROXY}' '${PROXY_URL}' '${PROXY_URL}' '${RESOLVED_NO_PROXY}' > /etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d/proxy.conf
 EOF
 )"
     MODEL_CONFIG_ARGS+=(

@@ -22,9 +22,9 @@ Minimal `stsstack-bundles`-style generator for deploying **charmed Anbox Cloud**
 3. **PS6**: PS6 reproducer instances have direct internet egress, so `squid.internal:3128` is intentionally **not** auto-enabled (it blocks `archive.anbox-cloud.io` by default). Use `--proxy http://squid.internal:3128` only if you explicitly want to force it.
 
 When a proxy is active, `generate-bundle.sh` and `deploy-terraform.sh`:
-- Apply Juju `model-config` (`juju-http-proxy`, `juju-https-proxy`, `juju-no-proxy`, `apt-http-proxy`, `apt-https-proxy`, `snap-http-proxy`, `snap-https-proxy`), plus `cloudinit-userdata` to:
-  - Run `pro config set http_proxy`/`https_proxy` via `preruncmd` (because `pro` ignores environment proxy variables).
-  - Write `/etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d/proxy.conf` via `write_files` so the dashboard web service can reach `login.ubuntu.com` for Ubuntu One OAuth through the egress proxy.
+- Apply Juju `model-config` (`juju-http-proxy`, `juju-https-proxy`, `juju-no-proxy`, `apt-http-proxy`, `apt-https-proxy`, `snap-http-proxy`, `snap-https-proxy`), plus `cloudinit-userdata` `preruncmd` to:
+  - Run `pro config set http_proxy`/`https_proxy` (because `pro` ignores environment proxy variables).
+  - Write `/etc/systemd/system/snap.anbox-cloud-dashboard.web.service.d/proxy.conf` so the dashboard web service can reach `login.ubuntu.com` for Ubuntu One OAuth through the egress proxy.
 - Warn if the proxy returns HTTP `403` for `archive.anbox-cloud.io` or `images.anbox-cloud.io` (both domains must be allowlisted on the egress proxy for `pro enable anbox-cloud` and AMS image sync).
 - Configure `core.proxy_http`, `core.proxy_https`, and `core.proxy_ignore_hosts` (with CIDRs stripped, as AMS rejects CIDR notation) on the `ams` charm so AMS can pull Android images through the proxy.
 
@@ -88,7 +88,7 @@ export UA_TOKEN="<your-ubuntu-pro-token>"
 
 ## Quickstart: Terraform Mode (`>= 1.30`)
 
-`deploy-terraform.sh` clones `canonical/anbox-cloud-terraform` into `b/<name>/terraform/`, generates `b/<name>/deploy.tfvars.json` (`chmod 600`), and injects `sts_override.tf` into each module for PS7 proxy + `cloudinit-userdata` (`pro config set`), AMS proxy config, LXD machine constraints (default `cores=8 mem=16G root-disk=100G`, merged by key with `--constraints`), and optional LXD storage.
+`deploy-terraform.sh` clones `canonical/anbox-cloud-terraform` into `b/<name>/terraform/`, generates `b/<name>/deploy.tfvars.json` (`chmod 600`), and injects `sts_override.tf` into each module for PS7 proxy + `cloudinit-userdata` (`pro config set` and dashboard systemd proxy drop-in), AMS proxy config, LXD machine constraints (default `cores=8 mem=16G root-disk=100G root-disk-source=volume`, merged by key with `--constraints`), and optional LXD storage.
 
 > **Note:**
 > - Upstream `anbox-cloud-terraform` uses fixed Juju model names (`anbox-controller`, `anbox-subcluster-<suffix>`, `anbox-registry`), so **only one Terraform deployment is supported per Juju controller**. `deploy-terraform.sh` aborts before `apply` if any of those models already exist outside the current workspace's state.
