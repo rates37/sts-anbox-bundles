@@ -562,7 +562,7 @@ if ! ${DRY_RUN}; then
     fi
 
     if ${CREATE_MODEL} && [[ -n "${BUNDLE_NAME}" ]]; then
-        if juju models --format=short 2>/dev/null | awk '{print $1}' | sed 's/\*$//' | grep -qx "${BUNDLE_NAME}"; then
+        if juju show-model "${BUNDLE_NAME}" &>/dev/null; then
             echo "INFO: switching to existing Juju model '${BUNDLE_NAME}'"
             juju switch "${BUNDLE_NAME}"
         else
