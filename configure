@@ -78,7 +78,40 @@ STATUS_JSON="$(juju status "${MODEL_FLAG[@]}" --format=json)"
 
 echo "=== Anbox Cloud Post-Deployment Summary ==="
 
-# 1. Check LXD units for required reboots
+# 1. Check binder_linux kernel module on LXD units (before any --reboot so SSH stays up)
+readarray -t LXD_UNITS < <(
+    echo "${STATUS_JSON}" | jq -r '.applications.lxd.units // {} | keys[]'
+)
+
+if ((${#LXD_UNITS[@]} > 0)); then
+    echo ""
+    echo "[LXD Kernel Modules]"
+    for unit in "${LXD_UNITS[@]}"; do
+        kver="$(juju ssh "${MODEL_FLAG[@]}" "${unit}" -- "uname -r" 2>/dev/null | tr -d '\r\n')" || kver=""
+        if [[ -z "${kver}" ]]; then
+            echo "  WARNING: ${unit} is unreachable via 'juju ssh', skipping kernel module check." >&2
+            continue
+        fi
+
+        if juju ssh "${MODEL_FLAG[@]}" "${unit}" -- "modinfo binder_linux >/dev/null 2>&1" 2>/dev/null; then
+            echo "  ${unit}: binder_linux available (${kver})."
+        else
+            if ${FIX_MODULES}; then
+                echo "  ${unit}: installing linux-modules-extra-${kver}..."
+                if ! juju ssh "${MODEL_FLAG[@]}" "${unit}" -- \
+                    "sudo apt-get update && sudo apt-get install -y linux-modules-extra-${kver} && sudo modprobe binder_linux"; then
+                    echo "  WARNING: failed to install/load binder_linux on ${unit}." >&2
+                fi
+            else
+                echo "  WARNING: ${unit} is missing binder_linux for running kernel ${kver}."
+                echo "  Re-run with --fix-modules or run:"
+                echo "    juju ssh ${MODEL_FLAG[*]} ${unit} -- \"sudo apt-get update && sudo apt-get install -y linux-modules-extra-${kver} && sudo modprobe binder_linux\""
+            fi
+        fi
+    done
+fi
+
+# 1b. Check LXD units for required reboots (run after module checks)
 readarray -t REBOOT_UNITS < <(
     echo "${STATUS_JSON}" | jq -r '
         .applications.lxd.units // {} | to_entries[]
@@ -94,6 +127,9 @@ if ((${#REBOOT_UNITS[@]} > 0)); then
         if ${DO_REBOOT}; then
             echo "  Rebooting ${unit}..."
             juju ssh "${MODEL_FLAG[@]}" "${unit}" -- sudo reboot || true
+            if ${FIX_MODULES}; then
+                echo "  NOTE: ${unit} is rebooting; if it boots into a newer kernel, re-run './configure ${MODEL_FLAG[*]} --fix-modules' once it is back."
+            fi
         else
             echo "  ${unit} requires a reboot. Run:"
             echo "    juju ssh ${MODEL_FLAG[*]} ${unit} -- sudo reboot"
@@ -103,32 +139,6 @@ else
     echo ""
     echo "[LXD Reboots]"
     echo "  No LXD units currently report 'Reboot Required'."
-fi
-
-# 1b. Check binder_linux kernel module on LXD units
-readarray -t LXD_UNITS < <(
-    echo "${STATUS_JSON}" | jq -r '.applications.lxd.units // {} | keys[]'
-)
-
-if ((${#LXD_UNITS[@]} > 0)); then
-    echo ""
-    echo "[LXD Kernel Modules]"
-    for unit in "${LXD_UNITS[@]}"; do
-        if juju ssh "${MODEL_FLAG[@]}" "${unit}" -- "modinfo binder_linux >/dev/null 2>&1"; then
-            echo "  ${unit}: binder_linux available."
-        else
-            kver="$(juju ssh "${MODEL_FLAG[@]}" "${unit}" -- "uname -r" 2>/dev/null | tr -d '\r\n')"
-            if ${FIX_MODULES}; then
-                echo "  ${unit}: installing linux-modules-extra-${kver}..."
-                juju ssh "${MODEL_FLAG[@]}" "${unit}" -- \
-                    "sudo apt-get update && sudo apt-get install -y linux-modules-extra-${kver} && sudo modprobe binder_linux"
-            else
-                echo "  WARNING: ${unit} is missing binder_linux for running kernel ${kver}."
-                echo "  Re-run with --fix-modules or run:"
-                echo "    juju ssh ${MODEL_FLAG[*]} ${unit} -- \"sudo apt-get update && sudo apt-get install -y linux-modules-extra-${kver} && sudo modprobe binder_linux\""
-            fi
-        fi
-    done
 fi
 
 # 2. Check Ceph storage relation if lxd is configured with storage_type=ceph
