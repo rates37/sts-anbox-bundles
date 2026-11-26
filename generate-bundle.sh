@@ -182,17 +182,24 @@ fetch_and_strip_upstream_bundle() {
         juju download "${UPSTREAM_BUNDLE}" --channel "${ANBOX_CHANNEL}" --filepath "${bundle_zip}"
     fi
 
-    # Extract bundle.yaml and strip hardcoded charm revision pins so Juju
-    # resolves the revision matching the target series/base and architecture
-    # (upstream 1.29 bundles pin 22.04 revisions despite specifying series: noble).
+    # Extract bundle.yaml and strip hardcoded charm revision pins under
+    # applications.*.revision using PyYAML so Juju resolves the revision
+    # matching the target series/base and architecture without touching any
+    # other keys (e.g. resources).
     python3 -c '
-import re, sys, zipfile
+import sys, yaml, zipfile
 zip_path, out_path = sys.argv[1], sys.argv[2]
 with zipfile.ZipFile(zip_path) as zf:
-    content = zf.read("bundle.yaml").decode("utf-8")
-stripped = re.sub(r"^[ \t]*revision:[ \t]*\d+[ \t]*\n", "", content, flags=re.MULTILINE)
+    data = yaml.safe_load(zf.read("bundle.yaml").decode("utf-8"))
+removed = []
+for app_name, app_cfg in (data.get("applications") or {}).items():
+    if isinstance(app_cfg, dict) and "revision" in app_cfg:
+        rev = app_cfg.pop("revision")
+        removed.append(f"{app_name}={rev}")
+if removed:
+    print("INFO: stripped upstream charm revision pins: " + ", ".join(removed))
 with open(out_path, "w", encoding="utf-8") as fh:
-    fh.write(stripped)
+    yaml.safe_dump(data, fh, sort_keys=False)
 ' "${bundle_zip}" "${dest_yaml}"
 
     rm -f "${bundle_zip}"
@@ -406,6 +413,11 @@ fi
 if ${REPLAY}; then
     if [[ ! -f "${BUNDLE_DIR}/command" ]]; then
         echo "ERROR: ${BUNDLE_DIR}/command does not exist" >&2
+        exit 1
+    fi
+    if grep -q '^# DRY-RUN:' "${BUNDLE_DIR}/command"; then
+        echo "ERROR: ${BUNDLE_DIR}/command was generated with --dry-run (upstream bundle.yaml was not downloaded/stripped)." >&2
+        echo "       Re-run generate-bundle.sh without --dry-run before replaying or deploying." >&2
         exit 1
     fi
     echo "INFO: replaying last known command (from ${BUNDLE_DIR}/command)"
@@ -643,6 +655,9 @@ if ((${#MODEL_CONFIG_ARGS[@]} > 0)); then
 fi
 
 {
+    if ${DRY_RUN}; then
+        printf '# DRY-RUN: run without --dry-run to download and strip bundle.yaml before deploying.\n'
+    fi
     printf 'juju deploy'
     if [[ -n "${MODEL_NAME}" ]]; then
         printf ' -m %q' "${MODEL_NAME}"
