@@ -182,25 +182,38 @@ fetch_and_strip_upstream_bundle() {
         juju download "${UPSTREAM_BUNDLE}" --channel "${ANBOX_CHANNEL}" --filepath "${bundle_zip}"
     fi
 
-    # Extract bundle.yaml and strip hardcoded charm revision pins under
-    # applications.*.revision using PyYAML so Juju resolves the revision
-    # matching the target series/base and architecture without touching any
-    # other keys (e.g. resources).
+    # Extract bundle.yaml, strip hardcoded charm revision pins under
+    # applications.*.revision, and align top-level/app series with ANBOX_SERIES
+    # so Juju resolves matching charm revisions without series/base mismatches.
     python3 -c '
 import sys, yaml, zipfile
-zip_path, out_path = sys.argv[1], sys.argv[2]
+zip_path, out_path, target_series = sys.argv[1], sys.argv[2], sys.argv[3]
 with zipfile.ZipFile(zip_path) as zf:
     data = yaml.safe_load(zf.read("bundle.yaml").decode("utf-8"))
+if "series" in data and data["series"] != target_series:
+    orig_series = data["series"]
+    print(f"INFO: updating bundle series from {orig_series} to {target_series}")
+    data["series"] = target_series
 removed = []
 for app_name, app_cfg in (data.get("applications") or {}).items():
-    if isinstance(app_cfg, dict) and "revision" in app_cfg:
+    if not isinstance(app_cfg, dict):
+        continue
+    if "revision" in app_cfg:
         rev = app_cfg.pop("revision")
         removed.append(f"{app_name}={rev}")
+    if "series" in app_cfg and app_cfg["series"] != target_series:
+        app_cfg["series"] = target_series
+    if app_cfg.get("charm") == "charmed-etcd" and target_series != "noble":
+        print(
+            f"WARNING: {app_name} uses charmed-etcd which only supports ubuntu@24.04 (noble); "
+            f"deploying with -s {target_series} may fail (use 1.28/stable or earlier for jammy).",
+            file=sys.stderr,
+        )
 if removed:
     print("INFO: stripped upstream charm revision pins: " + ", ".join(removed))
 with open(out_path, "w", encoding="utf-8") as fh:
     yaml.safe_dump(data, fh, sort_keys=False)
-' "${bundle_zip}" "${dest_yaml}"
+' "${bundle_zip}" "${dest_yaml}" "${ANBOX_SERIES}"
 
     rm -f "${bundle_zip}"
 }
@@ -461,6 +474,10 @@ if [[ "${ANBOX_SERIES}" != "noble" && "${ANBOX_SERIES}" != "jammy" ]]; then
     echo "WARNING: Anbox Cloud officially supports 'noble' and 'jammy' (got '${ANBOX_SERIES}')" >&2
 fi
 
+if [[ "${ANBOX_CHANNEL}" == 1.29/* && "${ANBOX_SERIES}" != "noble" ]]; then
+    echo "WARNING: Anbox Cloud 1.29 uses charmed-etcd (ubuntu@24.04/noble only); '-s ${ANBOX_SERIES}' will likely fail unless using 1.28/stable or earlier." >&2
+fi
+
 # Detect proxy & build deduplicated no_proxy list
 detect_proxy
 
@@ -545,6 +562,15 @@ EOF
     )
 fi
 if ((${#EXTRA_MODEL_CONFIG[@]} > 0)); then
+    if [[ -n "${PROXY_URL}" ]]; then
+        for kv in "${EXTRA_MODEL_CONFIG[@]}"; do
+            if [[ "${kv}" == cloudinit-userdata=* ]]; then
+                echo "WARNING: --model-config cloudinit-userdata=... overrides the auto-generated proxy preruncmd (pro config set & dashboard proxy drop-in)." >&2
+                echo "         Include those preruncmd entries in your custom cloudinit-userdata if deploying behind a proxy (e.g. PS7)." >&2
+                break
+            fi
+        done
+    fi
     MODEL_CONFIG_ARGS+=("${EXTRA_MODEL_CONFIG[@]}")
 fi
 
