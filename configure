@@ -25,6 +25,13 @@ OPTIONS:
 EOF
 }
 
+require_arg() {
+    if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "ERROR: option '$1' requires a value" >&2
+        exit 1
+    fi
+}
+
 while (($# > 0)); do
     case "$1" in
         --*=*)
@@ -33,6 +40,7 @@ while (($# > 0)); do
     esac
     case "$1" in
         -m|--model)
+            require_arg "$@"
             MODEL="$2"
             shift
             ;;
@@ -43,6 +51,7 @@ while (($# > 0)); do
             FIX_MODULES=true
             ;;
         --register-email)
+            require_arg "$@"
             REGISTER_EMAIL="$2"
             shift
             ;;
@@ -70,8 +79,10 @@ if ! command -v jq &>/dev/null; then
 fi
 
 MODEL_FLAG=()
+MODEL_PREFIX=""
 if [[ -n "${MODEL}" ]]; then
     MODEL_FLAG=(-m "${MODEL}")
+    MODEL_PREFIX="-m ${MODEL} "
 fi
 
 STATUS_JSON="$(juju status "${MODEL_FLAG[@]}" --format=json)"
@@ -141,35 +152,41 @@ else
     echo "  No LXD units currently report 'Reboot Required'."
 fi
 
-# 2. Check Ceph storage relation if lxd is configured with storage_type=ceph
-LXD_STORAGE_TYPE="$(juju config "${MODEL_FLAG[@]}" lxd storage_type 2>/dev/null || true)"
-if [[ "${LXD_STORAGE_TYPE}" == "ceph" ]]; then
-    HAS_CEPH_REL="$(echo "${STATUS_JSON}" | jq -r '
-        (.applications.lxd.relations.ceph // []) | length
-    ')"
-    if [[ "${HAS_CEPH_REL}" == "0" ]]; then
-        echo ""
-        echo "[Ceph Storage]"
-        echo "  WARNING: lxd has storage_type=ceph but no 'ceph' relation yet."
-        echo "  Integrate with your Ceph provider:"
-        echo "    juju integrate ${MODEL_FLAG[*]} lxd:ceph microceph:ceph   # or ceph-mon:client"
+# 2. Check Ceph storage relation if lxd is present and configured with storage_type=ceph
+HAS_LXD="$(echo "${STATUS_JSON}" | jq -r '.applications.lxd != null')"
+if [[ "${HAS_LXD}" == "true" ]]; then
+    LXD_STORAGE_TYPE="$(juju config "${MODEL_FLAG[@]}" lxd storage_type 2>/dev/null || true)"
+    if [[ "${LXD_STORAGE_TYPE}" == "ceph" ]]; then
+        HAS_CEPH_REL="$(echo "${STATUS_JSON}" | jq -r '
+            (.applications.lxd.relations.ceph // []) | length
+        ')"
+        if [[ "${HAS_CEPH_REL}" == "0" ]]; then
+            echo ""
+            echo "[Ceph Storage]"
+            echo "  WARNING: lxd has storage_type=ceph but no 'ceph' relation yet."
+            echo "  Integrate with your Ceph provider (e.g. microceph:ceph, ceph-mon:client, or ceph-proxy:client):"
+            echo "    juju integrate ${MODEL_PREFIX}lxd:ceph <ceph-app>:<endpoint>"
+        fi
     fi
 fi
 
 # 3. AMS endpoint info
+HAS_AMS="$(echo "${STATUS_JSON}" | jq -r '.applications.ams != null')"
 AMS_LB_IP="$(echo "${STATUS_JSON}" | jq -r '.applications."ams-load-balancer".units // {} | to_entries[0].value."public-address" // empty')"
 AMS_IP="$(echo "${STATUS_JSON}" | jq -r '.applications.ams.units // {} | to_entries[0].value."public-address" // empty')"
 
-echo ""
-echo "[AMS]"
-if [[ -n "${AMS_LB_IP}" ]]; then
-    echo "  AMS Load Balancer: https://${AMS_LB_IP}:8444"
-    echo "  Remote amc setup:  amc remote add lb https://${AMS_LB_IP}:8444 && amc remote set-default lb"
-elif [[ -n "${AMS_IP}" ]]; then
-    echo "  AMS unit 0:        https://${AMS_IP}:8444"
-    echo "  Local amc access:  juju ssh ${MODEL_FLAG[*]} ams/0 -- amc node ls"
-else
-    echo "  AMS unit address not yet available."
+if [[ "${HAS_AMS}" == "true" || -n "${AMS_LB_IP}" ]]; then
+    echo ""
+    echo "[AMS]"
+    if [[ -n "${AMS_LB_IP}" ]]; then
+        echo "  AMS Load Balancer: https://${AMS_LB_IP}:8444"
+        echo "  Remote amc setup:  amc remote add lb https://${AMS_LB_IP}:8444 && amc remote set-default lb"
+    elif [[ -n "${AMS_IP}" ]]; then
+        echo "  AMS unit:          https://${AMS_IP}:8444"
+        echo "  Local amc access:  juju ssh ${MODEL_PREFIX}ams/leader -- amc node ls"
+    else
+        echo "  AMS unit address not yet available."
+    fi
 fi
 
 # 4. Dashboard / Stream Gateway info (full bundle or Terraform anbox-controller model)
@@ -190,10 +207,15 @@ if [[ "${HAS_DASHBOARD}" == "true" ]]; then
 
     if [[ -n "${REGISTER_EMAIL}" ]]; then
         echo "  Registering Ubuntu One account '${REGISTER_EMAIL}'..."
-        juju run "${MODEL_FLAG[@]}" anbox-cloud-dashboard/0 --wait=5m register-account email="${REGISTER_EMAIL}"
+        juju run "${MODEL_FLAG[@]}" anbox-cloud-dashboard/leader --wait=5m register-account email="${REGISTER_EMAIL}"
     else
-        echo "  Register a user:   juju run ${MODEL_FLAG[*]} anbox-cloud-dashboard/0 --wait=5m register-account email=<ubuntu-one-email>"
+        echo "  Register a user:   juju run ${MODEL_PREFIX}anbox-cloud-dashboard/leader --wait=5m register-account email=<ubuntu-one-email>"
     fi
+elif [[ -n "${REGISTER_EMAIL}" ]]; then
+    echo ""
+    echo "[Dashboard & Streaming]"
+    echo "  WARNING: 'anbox-cloud-dashboard' is not deployed in this model; cannot register '${REGISTER_EMAIL}'." >&2
+    echo "  For Terraform deployments, run: ./configure -m anbox-controller --register-email ${REGISTER_EMAIL}" >&2
 fi
 
 echo ""
